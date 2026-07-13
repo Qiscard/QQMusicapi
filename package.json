@@ -1,0 +1,28 @@
+{
+  "name": "qqmusic-api-node",
+  "version": "0.1.0",
+  "description": "QQ Music API for Node.js (JavaScript port of L-1124/QQMusicApi)",
+  "type": "module",
+  "main": "src/server.js",
+  "exports": {
+    ".": "./src/server.js"
+  },
+  "scripts": {
+    "start": "node src/server.js",
+    "dev": "node --watch src/server.js"
+  },
+  "keywords": [
+    "qqmusic",
+    "api",
+    "nodejs"
+  ],
+  "engines": {
+    "node": ">=18"
+  },
+  "dependencies": {
+    "@koa/router": "^12.0.1",
+    "koa": "^2.15.3",
+    "koa-bodyparser": "^4.4.1",
+    "undici": "^6.19.8"
+  }
+}

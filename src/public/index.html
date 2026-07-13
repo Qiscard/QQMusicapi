@@ -1,0 +1,711 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>QQ Music 解析</title>
+  <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/aplayer/dist/APlayer.min.css">
+  <style>
+    * { box-sizing: border-box; }
+    body {
+      margin: 0;
+      font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", "PingFang SC", "Microsoft YaHei", sans-serif;
+      background: #0f1115;
+      color: #e6e6e6;
+      min-height: 100vh;
+    }
+    header {
+      padding: 18px 24px;
+      background: #16191f;
+      border-bottom: 1px solid #232830;
+      display: flex;
+      align-items: center;
+      gap: 14px;
+      flex-wrap: wrap;
+    }
+    header h1 {
+      margin: 0;
+      font-size: 18px;
+      font-weight: 600;
+      color: #4ea1ff;
+    }
+    header .meta {
+      font-size: 12px;
+      color: #8a909c;
+    }
+    .status-dot {
+      display: inline-block;
+      width: 8px;
+      height: 8px;
+      border-radius: 50%;
+      background: #555;
+      margin-right: 4px;
+      vertical-align: middle;
+    }
+    .status-dot.online { background: #4ade80; }
+    .status-dot.offline { background: #f87171; }
+
+    .container {
+      max-width: 1100px;
+      margin: 0 auto;
+      padding: 24px;
+    }
+
+    .input-row {
+      display: flex;
+      gap: 10px;
+      margin-bottom: 20px;
+    }
+    .input-row input {
+      flex: 1;
+      padding: 12px 14px;
+      background: #1a1e26;
+      border: 1px solid #2a313c;
+      border-radius: 8px;
+      color: #e6e6e6;
+      font-size: 14px;
+      outline: none;
+      transition: border-color .15s;
+    }
+    .input-row input:focus { border-color: #4ea1ff; }
+    .input-row input::placeholder { color: #5a6170; }
+    .input-row button {
+      padding: 12px 22px;
+      background: #4ea1ff;
+      color: #0f1115;
+      border: none;
+      border-radius: 8px;
+      font-size: 14px;
+      font-weight: 600;
+      cursor: pointer;
+      transition: background .15s;
+    }
+    .input-row button:hover:not(:disabled) { background: #6bb3ff; }
+    .input-row button:disabled { background: #2a313c; color: #6a7080; cursor: not-allowed; }
+    .input-row .hint {
+      font-size: 12px;
+      color: #6a7080;
+      align-self: center;
+    }
+
+    .section {
+      background: #16191f;
+      border: 1px solid #232830;
+      border-radius: 10px;
+      padding: 18px 20px;
+      margin-bottom: 16px;
+    }
+    .section h2 {
+      margin: 0 0 14px 0;
+      font-size: 15px;
+      color: #c0c5cf;
+      font-weight: 600;
+      border-left: 3px solid #4ea1ff;
+      padding-left: 10px;
+    }
+
+    .song-info {
+      display: flex;
+      gap: 18px;
+      align-items: flex-start;
+    }
+    .song-info .cover {
+      width: 130px;
+      height: 130px;
+      border-radius: 8px;
+      background: #232830;
+      object-fit: cover;
+      flex-shrink: 0;
+    }
+    .song-info .info { flex: 1; min-width: 0; }
+    .song-info .title {
+      font-size: 18px;
+      font-weight: 600;
+      margin-bottom: 6px;
+      word-break: break-all;
+    }
+    .song-info .singer {
+      font-size: 13px;
+      color: #8a909c;
+      margin-bottom: 4px;
+    }
+    .song-info .album {
+      font-size: 13px;
+      color: #8a909c;
+      margin-bottom: 4px;
+    }
+    .song-info .ids {
+      font-size: 12px;
+      color: #5a6170;
+      font-family: monospace;
+    }
+    .song-info .ids span { margin-right: 14px; }
+
+    .quality-grid {
+      display: grid;
+      grid-template-columns: repeat(auto-fill, minmax(220px, 1fr));
+      gap: 10px;
+    }
+    .quality-item {
+      background: #1a1e26;
+      border: 1px solid #2a313c;
+      border-radius: 8px;
+      padding: 12px;
+      display: flex;
+      flex-direction: column;
+      gap: 8px;
+    }
+    .quality-item .q-head {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+    }
+    .quality-item .q-label {
+      font-size: 13px;
+      font-weight: 600;
+    }
+    .quality-item .q-code {
+      font-size: 11px;
+      color: #6a7080;
+      font-family: monospace;
+    }
+    .quality-item .q-actions {
+      display: flex;
+      gap: 6px;
+    }
+    .quality-item button,
+    .quality-item a {
+      flex: 1;
+      padding: 6px 10px;
+      border-radius: 5px;
+      font-size: 12px;
+      text-decoration: none;
+      text-align: center;
+      border: 1px solid #2a313c;
+      background: #232830;
+      color: #c0c5cf;
+      cursor: pointer;
+      transition: all .15s;
+    }
+    .quality-item button:hover,
+    .quality-item a:hover { background: #2d3543; }
+    .quality-item.ok { border-color: #2d5e3c; }
+    .quality-item.ok .q-label { color: #4ade80; }
+    .quality-item.ok a.play { background: #4ea1ff; color: #0f1115; border-color: #4ea1ff; }
+    .quality-item.err { border-color: #5e2d2d; }
+    .quality-item.err .q-label { color: #f87171; }
+    .quality-item.loading { opacity: .5; }
+    .quality-item .q-error {
+      font-size: 11px;
+      color: #f87171;
+      word-break: break-all;
+    }
+
+    .lyric-box {
+      max-height: 460px;
+      overflow-y: auto;
+      background: #0f1115;
+      border-radius: 6px;
+      padding: 12px 14px;
+      font-size: 13px;
+      line-height: 1.9;
+      white-space: pre-wrap;
+      color: #c0c5cf;
+    }
+    .lyric-tabs {
+      display: flex;
+      gap: 6px;
+      margin-bottom: 10px;
+      flex-wrap: wrap;
+    }
+    .lyric-tabs button {
+      padding: 5px 12px;
+      background: #1a1e26;
+      border: 1px solid #2a313c;
+      border-radius: 5px;
+      color: #8a909c;
+      font-size: 12px;
+      cursor: pointer;
+    }
+    .lyric-tabs button.active {
+      background: #4ea1ff;
+      color: #0f1115;
+      border-color: #4ea1ff;
+    }
+
+    .similar-list {
+      display: grid;
+      grid-template-columns: repeat(auto-fill, minmax(200px, 1fr));
+      gap: 10px;
+    }
+    .similar-item {
+      background: #1a1e26;
+      border: 1px solid #2a313c;
+      border-radius: 8px;
+      padding: 10px;
+      cursor: pointer;
+      transition: border-color .15s;
+    }
+    .similar-item:hover { border-color: #4ea1ff; }
+    .similar-item .s-title {
+      font-size: 13px;
+      font-weight: 500;
+      margin-bottom: 3px;
+      overflow: hidden;
+      text-overflow: ellipsis;
+      white-space: nowrap;
+    }
+    .similar-item .s-singer {
+      font-size: 11px;
+      color: #6a7080;
+      overflow: hidden;
+      text-overflow: ellipsis;
+      white-space: nowrap;
+    }
+
+    .player-row {
+      margin-top: 12px;
+      display: flex;
+      align-items: center;
+      gap: 10px;
+    }
+    .player-row .now-label {
+      font-size: 12px;
+      color: #8a909c;
+      min-width: 100px;
+    }
+    /* APlayer 暗色主题适配 */
+    .aplayer {
+      background: #1a1e26 !important;
+      color: #e6e6e6 !important;
+      box-shadow: none !important;
+      border-radius: 8px !important;
+      font-family: inherit !important;
+    }
+    .aplayer .aplayer-body {
+      background: #1a1e26 !important;
+    }
+    .aplayer .aplayer-info {
+      background: #1a1e26 !important;
+      color: #e6e6e6 !important;
+      border-color: #2a313c !important;
+    }
+    .aplayer .aplayer-info .aplayer-music .aplayer-title {
+      color: #e6e6e6 !important;
+    }
+    .aplayer .aplayer-info .aplayer-music .aplayer-author {
+      color: #8a909c !important;
+    }
+    .aplayer .aplayer-info .aplayer-controller .aplayer-time {
+      color: #8a909c !important;
+    }
+    .aplayer .aplayer-info .aplayer-controller .aplayer-volume-wrap {
+      color: #8a909c !important;
+    }
+    .aplayer .aplayer-info .aplayer-controller .aplayer-bar-wrap .aplayer-bar {
+      background: #2a313c !important;
+    }
+    .aplayer .aplayer-info .aplayer-controller .aplayer-bar-wrap .aplayer-bar .aplayer-played {
+      background: #4ea1ff !important;
+    }
+    .aplayer .aplayer-info .aplayer-controller .aplayer-bar-wrap .aplayer-bar .aplayer-loaded {
+      background: #2d3543 !important;
+    }
+    .aplayer .aplayer-info .aplayer-controller .aplayer-bar-wrap .aplayer-bar .aplayer-thumb {
+      background: #4ea1ff !important;
+    }
+    .aplayer .aplayer-info .aplayer-controller .aplayer-icon {
+      fill: #c0c5cf !important;
+    }
+    .aplayer .aplayer-info .aplayer-controller .aplayer-icon:hover {
+      fill: #4ea1ff !important;
+    }
+    .aplayer .aplayer-list {
+      background: #16191f !important;
+      border-color: #2a313c !important;
+    }
+    .aplayer .aplayer-list ol li {
+      color: #c0c5cf !important;
+      border-color: #2a313c !important;
+    }
+    .aplayer .aplayer-list ol li:hover {
+      background: #1a1e26 !important;
+    }
+    .aplayer .aplayer-list ol li.aplayer-list-light {
+      background: #1a1e26 !important;
+      color: #4ea1ff !important;
+    }
+    .aplayer .aplayer-list ol li.aplayer-list-light .aplayer-list-author {
+      color: #4ea1ff !important;
+    }
+    .aplayer .aplayer-list ol li .aplayer-list-author {
+      color: #6a7080 !important;
+    }
+    .aplayer .aplayer-list ol li .aplayer-list-index {
+      color: #6a7080 !important;
+    }
+
+    .loading {
+      text-align: center;
+      padding: 20px;
+      color: #6a7080;
+      font-size: 13px;
+    }
+    .empty {
+      text-align: center;
+      padding: 40px 20px;
+      color: #5a6170;
+      font-size: 13px;
+    }
+    .error-box {
+      background: #2a1717;
+      border: 1px solid #5e2d2d;
+      color: #f87171;
+      padding: 12px 14px;
+      border-radius: 6px;
+      font-size: 13px;
+      word-break: break-all;
+    }
+    .hidden { display: none !important; }
+  </style>
+</head>
+<body>
+  <header>
+    <h1>QQ Music 解析</h1>
+    <span class="meta"><span class="status-dot" id="statusDot"></span><span id="statusText">检测中…</span></span>
+    <span class="meta" id="loginMeta"></span>
+    <a href="/login" style="margin-left:auto;font-size:13px;color:#4ea1ff;text-decoration:none;padding:6px 14px;border:1px solid #2a313c;border-radius:6px;transition:all .15s;" onmouseover="this.style.borderColor='#4ea1ff'" onmouseout="this.style.borderColor='#2a313c'">登录管理</a>
+  </header>
+
+  <div class="container">
+    <div class="input-row">
+      <input id="urlInput" type="text" placeholder="粘贴歌曲链接 (例如 https://y.qq.com/n/ryqq_v2/songDetail/002kR3lm1nTxkV) 或直接输入 songmid" />
+      <button id="parseBtn">解析</button>
+      <span class="hint">支持 17 种音质</span>
+    </div>
+
+    <!-- 歌曲信息 -->
+    <div class="section hidden" id="songSection">
+      <h2>歌曲信息</h2>
+      <div class="song-info">
+        <img class="cover" id="songCover" alt="cover" />
+        <div class="info">
+          <div class="title" id="songTitle"></div>
+          <div class="singer" id="songSinger"></div>
+          <div class="album" id="songAlbum"></div>
+          <div class="ids" id="songIds"></div>
+          <div class="player-row">
+            <span class="now-label" id="nowLabel">未播放</span>
+            <div id="aplayer" style="flex:1;"></div>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <!-- 音质列表 -->
+    <div class="section hidden" id="qualitySection">
+      <h2>音质直链 <span id="qProgress" style="font-weight:400;color:#6a7080;font-size:12px;"></span></h2>
+      <div class="quality-grid" id="qualityGrid"></div>
+    </div>
+
+    <!-- 歌词 -->
+    <div class="section hidden" id="lyricSection">
+      <h2>歌词</h2>
+      <div class="lyric-tabs" id="lyricTabs"></div>
+      <div class="lyric-box" id="lyricBox"></div>
+    </div>
+
+    <!-- 相似歌曲 -->
+    <div class="section hidden" id="similarSection">
+      <h2>相似歌曲</h2>
+      <div class="similar-list" id="similarList"></div>
+    </div>
+
+    <div class="error-box hidden" id="errorBox"></div>
+  </div>
+
+  <script src="https://cdn.jsdelivr.net/npm/aplayer/dist/APlayer.min.js"></script>
+  <script>
+    // 17 种音质, 与后端 SongFileType 对应
+    const QUALITIES = [
+      { code: "DT03", label: "DTS:X" },
+      { code: "AI00", label: "臻品母带" },
+      { code: "Q000", label: "臻品音质" },
+      { code: "Q001", label: "臻品全景声 5.1" },
+      { code: "Q003", label: "臻品全景声 7.1" },
+      { code: "D004", label: "杜比全景声" },
+      { code: "TL01", label: "AICodec" },
+      { code: "F000", label: "SQ 无损" },
+      { code: "O801", label: "OGG 640" },
+      { code: "O800", label: "OGG 320" },
+      { code: "O600", label: "OGG 192" },
+      { code: "O400", label: "OGG 96" },
+      { code: "M800", label: "MP3 320" },
+      { code: "M500", label: "MP3 128" },
+      { code: "C600", label: "ACC 192" },
+      { code: "C400", label: "ACC 96" },
+      { code: "C200", label: "ACC 48" }
+    ];
+
+    const $ = (id) => document.getElementById(id);
+
+    // APlayer 实例 + 当前歌曲缓存
+    let ap = new APlayer({
+      container: $("aplayer"),
+      fixed: false,
+      autoplay: true,
+      theme: "#4ea1ff",
+      loop: "one",
+      order: "list",
+      volume: 0.7,
+      listMaxHeight: 80,
+      audio: []
+    });
+    let currentTrack = null;
+
+    // 从链接或纯 mid 中提取 songmid
+    function extractMid(input) {
+      const s = String(input || "").trim();
+      if (!s) return "";
+      // 1) songDetail/{mid} 形式
+      let m = s.match(/songDetail\/([A-Za-z0-9]+)/);
+      if (m) return m[1];
+      // 2) songmid={mid} 形式 (分享链接常见)
+      m = s.match(/[?&]songmid=([A-Za-z0-9]+)/);
+      if (m) return m[1];
+      // 3) /song/{mid} 形式
+      m = s.match(/\/song\/([A-Za-z0-9]+)/);
+      if (m) return m[1];
+      // 4) 直接是 mid (字母数字, 通常 14 位)
+      if (/^[A-Za-z0-9]{10,20}$/.test(s)) return s;
+      return "";
+    }
+
+    async function api(path) {
+      const r = await fetch(path);
+      const j = await r.json();
+      if (j.code !== 0) throw new Error(j.message || `code ${j.code}`);
+      return j.data;
+    }
+
+    async function checkStatus() {
+      try {
+        const d = await api("/health");
+        $("statusDot").className = "status-dot online";
+        $("statusText").textContent = "服务在线";
+        $("loginMeta").textContent = d.loggedIn ? `已登录: ${d.musicid}` : "未登录";
+      } catch {
+        $("statusDot").className = "status-dot offline";
+        $("statusText").textContent = "服务离线";
+      }
+    }
+
+    function hideAll() {
+      ["songSection", "qualitySection", "lyricSection", "similarSection", "errorBox"].forEach(id => $(id).classList.add("hidden"));
+    }
+    function showError(msg) {
+      $("errorBox").textContent = msg;
+      $("errorBox").classList.remove("hidden");
+    }
+
+    async function parseSong() {
+      const input = $("urlInput").value;
+      const mid = extractMid(input);
+      if (!mid) {
+        alert("无法识别 songmid, 请检查输入\n支持: 链接 / songmid= / 直接 mid");
+        return;
+      }
+      hideAll();
+      $("parseBtn").disabled = true;
+      $("parseBtn").textContent = "解析中…";
+      try {
+        // 详情失败不阻塞后续 (直链/歌词仅需 mid)
+        let track = null;
+        let detailErr = null;
+        try {
+          const detail = await api(`/song/detail?mids=${encodeURIComponent(mid)}`);
+          track = detail?.tracks?.[0] || null;
+        } catch (e) {
+          detailErr = e.message;
+        }
+        renderSongInfo(track, mid, detailErr);
+
+        // 并发: 17 音质 + 歌词 (相似歌曲需 track.id, 详情失败时跳过)
+        renderQualityGrid(mid);
+        const tasks = [fetchLyric(mid)];
+        if (track?.id) tasks.push(fetchSimilar(track.id));
+        await Promise.allSettled(tasks);
+      } finally {
+        $("parseBtn").disabled = false;
+        $("parseBtn").textContent = "解析";
+      }
+    }
+
+    function renderSongInfo(t, mid, detailErr) {
+      $("songSection").classList.remove("hidden");
+      if (t && (t.name || t.singer?.length)) {
+        const coverMid = t.album?.mid || "";
+        const coverUrl = coverMid ? `https://y.gtimg.cn/music/photo_new/T002R300x300M000${coverMid}.jpg` : "";
+        $("songCover").src = coverUrl;
+        $("songTitle").textContent = t.name || "(未知歌曲)";
+        $("songSinger").textContent = "歌手: " + (Array.isArray(t.singer) ? t.singer.map(s => s.name).join(" / ") : (t.singer || "-"));
+        $("songAlbum").textContent = "专辑: " + (t.album?.name || "-");
+        $("songIds").innerHTML = `<span>mid: ${mid}</span><span>id: ${t.id || "-"}</span>`;
+        // 保存供 APlayer 使用
+        currentTrack = {
+          name: t.name || "(未知歌曲)",
+          artist: Array.isArray(t.singer) ? t.singer.map(s => s.name).join(" / ") : (t.singer || "-"),
+          cover: coverUrl,
+          mid
+        };
+      } else {
+        // 详情失败: 仅显示 mid, 提示用户
+        $("songCover").src = "";
+        $("songTitle").textContent = "(详情获取失败)";
+        $("songSinger").textContent = "歌手: -";
+        $("songAlbum").textContent = "专辑: -";
+        $("songIds").innerHTML = `<span>mid: ${mid}</span><span style="color:#f87171;">详情: ${detailErr || "失败"}</span>`;
+        currentTrack = { name: "(详情获取失败)", artist: "-", cover: "", mid };
+      }
+      $("nowLabel").textContent = "未播放";
+      // 重置 APlayer 播放列表
+      if (ap) ap.list.clear();
+    }
+
+    function renderQualityGrid(mid) {
+      $("qualitySection").classList.remove("hidden");
+      const grid = $("qualityGrid");
+      grid.innerHTML = "";
+      let done = 0;
+      $("qProgress").textContent = `0 / ${QUALITIES.length}`;
+      const update = () => { $("qProgress").textContent = `${done} / ${QUALITIES.length}`; };
+
+      for (const q of QUALITIES) {
+        const item = document.createElement("div");
+        item.className = "quality-item loading";
+        item.innerHTML = `
+          <div class="q-head">
+            <span class="q-label">${q.label}</span>
+            <span class="q-code">${q.code}</span>
+          </div>
+          <div class="q-error"></div>
+          <div class="q-actions hidden">
+            <a class="play" href="#">播放</a>
+            <a class="dl" href="#" target="_blank">下载</a>
+          </div>
+        `;
+        grid.appendChild(item);
+        const errEl = item.querySelector(".q-error");
+        const actEl = item.querySelector(".q-actions");
+        const playEl = item.querySelector(".play");
+        const dlEl = item.querySelector(".dl");
+
+        api(`/song/urls?mids=${encodeURIComponent(mid)}&type=${q.code}`)
+          .then(map => {
+            const info = map?.[mid];
+            if (info?.url) {
+              item.classList.remove("loading");
+              item.classList.add("ok");
+              playEl.href = info.url;
+              dlEl.href = info.url;
+              playEl.addEventListener("click", (e) => {
+                e.preventDefault();
+                // 使用 APlayer 播放
+                if (!ap || !currentTrack) return;
+                ap.list.clear();
+                ap.list.add([{
+                  name: `${currentTrack.name} [${q.label}]`,
+                  artist: currentTrack.artist,
+                  url: info.url,
+                  cover: currentTrack.cover
+                }], true);
+                $("nowLabel").textContent = `▶ ${q.label}`;
+              });
+              actEl.classList.remove("hidden");
+            } else {
+              item.classList.remove("loading");
+              item.classList.add("err");
+              errEl.textContent = info?.error || "无可用直链";
+            }
+          })
+          .catch(e => {
+            item.classList.remove("loading");
+            item.classList.add("err");
+            errEl.textContent = e.message || "请求失败";
+          })
+          .finally(() => { done++; update(); });
+      }
+    }
+
+    async function fetchLyric(mid) {
+      try {
+        const d = await api(`/song/lyric?mid=${encodeURIComponent(mid)}&decode=1`);
+        $("lyricSection").classList.remove("hidden");
+        const tabs = $("lyricTabs");
+        const box = $("lyricBox");
+        tabs.innerHTML = "";
+        const items = [
+          { key: "lyric", label: "原文" },
+          { key: "trans", label: "翻译" },
+          { key: "roma", label: "罗马音" }
+        ].filter(it => d[it.key]);
+        if (items.length === 0) {
+          box.textContent = "(无歌词)";
+          return;
+        }
+        let active = items[0].key;
+        const render = () => {
+          box.textContent = d[active] || "(空)";
+          tabs.querySelectorAll("button").forEach(b => b.classList.toggle("active", b.dataset.key === active));
+        };
+        for (const it of items) {
+          const btn = document.createElement("button");
+          btn.textContent = it.label;
+          btn.dataset.key = it.key;
+          btn.addEventListener("click", () => { active = it.key; render(); });
+          tabs.appendChild(btn);
+        }
+        render();
+      } catch (e) {
+        // 歌词失败不致命
+      }
+    }
+
+    async function fetchSimilar(songid) {
+      if (!songid) return;
+      try {
+        const d = await api(`/song/similar?songid=${encodeURIComponent(songid)}`);
+        const list = d?.list || [];
+        if (list.length === 0) return;
+        $("similarSection").classList.remove("hidden");
+        const ul = $("similarList");
+        ul.innerHTML = "";
+        for (const s of list.slice(0, 20)) {
+          const el = document.createElement("div");
+          el.className = "similar-item";
+          el.innerHTML = `
+            <div class="s-title">${s.name || "?"}</div>
+            <div class="s-singer">${(s.singer || []).map(x => x.name).join(" / ") || "-"}</div>
+          `;
+          el.addEventListener("click", () => {
+            if (s.mid) {
+              $("urlInput").value = s.mid;
+              parseSong();
+            }
+          });
+          ul.appendChild(el);
+        }
+      } catch (e) {
+        // 相似失败不致命
+      }
+    }
+
+    $("parseBtn").addEventListener("click", parseSong);
+    $("urlInput").addEventListener("keydown", (e) => {
+      if (e.key === "Enter") parseSong();
+    });
+
+    checkStatus();
+  </script>
+</body>
+</html>
