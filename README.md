@@ -15,7 +15,7 @@
 ## 📦 安装
 
 ```bash
-cd qqmusic-api-node
+cd QQMusicapi
 npm install
 ```
 
@@ -29,7 +29,7 @@ npm install
 # 默认监听 3300 端口
 npm start
 
-# 开发模式 (文件变更自动重启)
+# 开发模式
 npm run dev
 
 # 自定义端口与设备路径
