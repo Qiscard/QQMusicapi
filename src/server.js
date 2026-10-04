@@ -17,9 +17,11 @@
  *   PLATFORM         请求平台: android / desktop / web (默认 android)
  */
 
-import { existsSync, mkdirSync, readFileSync, renameSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, readFileSync, renameSync, writeFileSync, createReadStream } from "node:fs";
 import { dirname, isAbsolute, resolve, join } from "node:path";
 import { fileURLToPath } from "node:url";
+import { createHash, timingSafeEqual } from "node:crypto";
+import { request as undiciRequest } from "undici";
 import Koa from "koa";
 import bodyParser from "koa-bodyparser";
 import Router from "@koa/router";
@@ -28,7 +30,7 @@ import { Client } from "./client.js";
 import { Platform } from "./versioning.js";
 import { Credential } from "./models/credential.js";
 import { SearchType } from "./modules/search.js";
-import { parseSongFileType } from "./modules/song_filetype.js";
+import { SongFileType, parseSongFileType } from "./modules/song_filetype.js";
 import { QrLoginType } from "./modules/login.js";
 import { qrcDecrypt } from "./algorithms/qrc.js";
 
@@ -58,6 +60,184 @@ async function errorHandler(ctx, next) {
     if (status >= 500) {
       console.error("[qqmusic-api]", err);
     }
+  }
+}
+
+// ==================== 运行配置存储 ====================
+
+/** 音质列表 (code/label/ext), 供 /config 下发与校验.
+ * TL01 (AICodec/.nac) 为腾讯私有格式, 本地无法播放, 不对外提供. */
+const QUALITY_LIST = Object.getOwnPropertyNames(SongFileType)
+  .map((k) => SongFileType[k])
+  .filter((v) => v instanceof SongFileType && v.code !== "TL01")
+  .map((v) => ({ code: v.code, label: v.label, ext: v.ext }));
+
+/** 默认音质使用 wire code (M500 = MP3 128k); 不要用枚举属性名, 保证与 /song/urls 的 type 一致 */
+const DEFAULT_QUALITY = "M500";
+
+/**
+ * 运行配置 (config.json). 目前仅 defaultQuality;
+ * defaultQuality 可由任意用户在 UI 中修改 (公开接口).
+ */
+class ConfigStore {
+  constructor(options = {}) {
+    this._path = options.path
+      ? (isAbsolute(options.path) ? options.path : resolve(options.path))
+      : resolve("./config.json");
+    this._data = this._load();
+  }
+
+  get path() {
+    return this._path;
+  }
+
+  get defaultQuality() {
+    return this._data.defaultQuality;
+  }
+
+  /** 更新配置并原子写盘; 字段合法性由调用方 (路由) 校验 */
+  async update(patch) {
+    this._data = { ...this._data, ...patch };
+    await this._persist();
+    return this._data;
+  }
+
+  toPublicJSON() {
+    return {
+      defaultQuality: this._data.defaultQuality,
+      qualities: QUALITY_LIST,
+    };
+  }
+
+  _load() {
+    let data = { defaultQuality: DEFAULT_QUALITY };
+    try {
+      if (existsSync(this._path)) {
+        const raw = JSON.parse(readFileSync(this._path, "utf-8"));
+        if (raw && typeof raw === "object") data = { ...data, ...raw };
+      }
+    } catch {
+      // 配置文件损坏时回退默认
+    }
+    if (!parseSongFileType(data.defaultQuality)) data.defaultQuality = DEFAULT_QUALITY;
+    return data;
+  }
+
+  async _persist() {
+    return new Promise((res, rej) => {
+      try {
+        const dir = dirname(this._path);
+        if (dir && !existsSync(dir)) mkdirSync(dir, { recursive: true });
+        const tmp = `${this._path}.tmp`;
+        writeFileSync(tmp, JSON.stringify(this._data, null, 2), "utf-8");
+        renameSync(tmp, this._path);
+        res();
+      } catch (e) {
+        rej(e);
+      }
+    });
+  }
+}
+
+// ==================== 管理员鉴权 ====================
+
+/**
+ * 管理员密钥从环境变量 ADMIN_KEY 读取 (绝不写入源码).
+ * 未配置时所有管理接口返回 503.
+ */
+const ADMIN_KEY = String(process.env.ADMIN_KEY ?? "");
+
+/** 常量时间比较 (先哈希对齐长度), 避免时序侧信道 */
+function keyMatches(input) {
+  if (!ADMIN_KEY || typeof input !== "string" || !input) return false;
+  const a = createHash("sha256").update(input).digest();
+  const b = createHash("sha256").update(ADMIN_KEY).digest();
+  return timingSafeEqual(a, b);
+}
+
+/**
+ * 管理员鉴权: 密钥可通过 X-API-Key 头 / ?key= 查询参数 / body.key 提供.
+ */
+function requireAdmin(ctx) {
+  if (keyMatches(ctx.get("x-api-key") ?? "")) return;
+  if (keyMatches(String(ctx.query.key ?? ""))) return;
+  const bodyKey = ctx.request.body?.key;
+  if (typeof bodyKey === "string" && keyMatches(bodyKey)) return;
+  if (!ADMIN_KEY) {
+    ctx.throw(503, "服务端未配置 ADMIN_KEY 环境变量, 管理功能不可用");
+  }
+  ctx.throw(401, "需要管理员密钥 (X-API-Key 头或 ?key= 参数)");
+}
+
+// ==================== 账号等级探测 ====================
+
+/**
+ * QQ 没有公开的 VIP 等级查询接口 (musicu vip 模块已收紧),
+ * 这里用行为探测: 对一首确定的 VIP 歌曲实测各音质能否取链.
+ * 能取 SVIP 专属音质 -> svip; 能取无损/320 -> vip; 否则 normal.
+ * 该结果同时决定 /config 中的可用音质列表 (需求: 按账号等级过滤默认音质).
+ */
+const ACCOUNT_LEVEL_RANK = { none: 0, normal: 1, vip: 2, svip: 3 };
+const PROBE_SONG_MID = "0039MnYb0qxYhV"; // 晴天 - 周杰伦 (VIP 歌曲)
+const SVIP_PROBE_CODES = ["Q000", "AI00", "D004"];
+const VIP_PROBE_CODES = ["F000", "O801", "M800"];
+const ACCOUNT_STATS_TTL = 30 * 60 * 1000;
+
+/**
+ * 音质 -> 所需最低账号等级.
+ * 分级来自实测 (2026-10, 对 VIP 账号 17 音质全量探测):
+ * VIP 可用 TL01/F000/O801/O800/O600/O400/M800/M500/C600/C400/C200,
+ * 臻品(Q000/Q001/Q003)/母带(AI00)/杜比(D004)/DTS(DT03) 为 SVIP 专属.
+ */
+const QUALITY_MIN_LEVEL = {
+  M500: "normal", C200: "normal", C400: "normal", C600: "normal", O400: "normal",
+  M800: "vip", F000: "vip", O600: "vip", O800: "vip", O801: "vip", TL01: "vip",
+  AI00: "svip", Q000: "svip", Q001: "svip", Q003: "svip",
+  D004: "svip", DT03: "svip",
+};
+
+let accountStatsCache = { ts: 0, level: "unknown", counts: { total: 0, svip: 0, vip: 0, normal: 0 } };
+let accountStatsPending = null;
+
+async function probeAccountLevel(client) {
+  if (!client.credential.isLoggedIn()) return "none";
+  const hasPurl = async (code) => {
+    try {
+      const urls = await client.song.getPlayUrls([PROBE_SONG_MID], code);
+      return Boolean(urls?.[PROBE_SONG_MID]?.url);
+    } catch {
+      return false;
+    }
+  };
+  for (const code of SVIP_PROBE_CODES) {
+    if (await hasPurl(code)) return "svip";
+  }
+  for (const code of VIP_PROBE_CODES) {
+    if (await hasPurl(code)) return "vip";
+  }
+  return "normal";
+}
+
+/** 探测并缓存账号等级; 过期后首个请求会触发重新探测 */
+async function getAccountStats(client) {
+  if (Date.now() - accountStatsCache.ts < ACCOUNT_STATS_TTL) return accountStatsCache;
+  if (accountStatsPending) return accountStatsPending;
+  accountStatsPending = (async () => {
+    const level = await probeAccountLevel(client);
+    const counts = { total: 0, svip: 0, vip: 0, normal: 0 };
+    if (level !== "none" && level !== "unknown") {
+      counts.total = 1;
+      if (level === "svip") counts.svip = 1;
+      else if (level === "vip") counts.vip = 1;
+      else counts.normal = 1;
+    }
+    accountStatsCache = { ts: Date.now(), level, counts };
+    return accountStatsCache;
+  })();
+  try {
+    return await accountStatsPending;
+  } finally {
+    accountStatsPending = null;
   }
 }
 
@@ -227,9 +407,65 @@ function searchRouter(client) {
   return router;
 }
 
+// ==================== 下载代理 ====================
+
+/** CDN 域名白名单: 仅允许 *.qq.com (isure/stream/aqqmusic 等均为其子域) */
+const QQ_CDN_HOST_RE = /(^|\.)qq\.com$/i;
+
+function sanitizeFilename(s) {
+  return String(s ?? "")
+    .replace(/[\\/:*?"<>|\r\n\0]/g, "_")
+    .trim();
+}
+
+/**
+ * 将播放直链以附件形式流式转发给客户端 (带 Content-Disposition 文件名).
+ * 直链来自 GetVkey 响应, 仍校验协议 (仅 http/https) 与域名白名单.
+ */
+async function streamDownload(ctx, url, { name, singer, ext }) {
+  let parsed;
+  try {
+    parsed = new URL(url);
+  } catch {
+    ctx.throw(502, "播放直链解析失败");
+  }
+  if (parsed.protocol !== "http:" && parsed.protocol !== "https:") {
+    ctx.throw(502, `不允许的直链协议: ${parsed.protocol}`);
+  }
+  if (!QQ_CDN_HOST_RE.test(parsed.hostname)) {
+    ctx.throw(502, `直链域名不在白名单: ${parsed.hostname}`);
+  }
+  const upstream = await undiciRequest(url, {
+    method: "GET",
+    headers: { "User-Agent": "QQMusic" },
+    maxRedirections: 5,
+  });
+  if (upstream.statusCode !== 200) {
+    upstream.body?.destroy?.();
+    ctx.throw(502, `CDN 返回 HTTP ${upstream.statusCode}`);
+  }
+  const base =
+    [sanitizeFilename(singer), sanitizeFilename(name)].filter(Boolean).join(" - ") ||
+    `qqmusic_${Date.now()}`;
+  const filename = `${base}${ext || ".mp3"}`;
+  ctx.status = 200;
+  ctx.set(
+    "Content-Type",
+    upstream.headers["content-type"] ?? "application/octet-stream",
+  );
+  const len = upstream.headers["content-length"];
+  if (len) ctx.set("Content-Length", len);
+  ctx.set(
+    "Content-Disposition",
+    `attachment; filename="download${ext || ".mp3"}"; filename*=UTF-8''${encodeURIComponent(filename)}`,
+  );
+  // undici 的 res.body (BodyReadable) 本身就是 Node Readable, Koa 可直接消费
+  ctx.body = upstream.body;
+}
+
 // ==================== 路由: /song ====================
 
-function songRouter(client) {
+function songRouter(client, configStore) {
   const router = new Router({ prefix: "/song" });
 
   router.get("/detail", async (ctx) => {
@@ -291,6 +527,37 @@ function songRouter(client) {
     ctx.body = ok(await client.song.getRelatedSonglist(mid));
   });
 
+  // 下载代理: 流式转发并带文件名; type 缺省取全局默认音质
+  router.get("/download", async (ctx) => {
+    const mid = String(ctx.query.mid ?? "").trim();
+    if (!mid) ctx.throw(400, "mid 必填");
+    const q = parseSongFileType(String(ctx.query.type ?? "")) ?? null;
+    const typeStr = q ? q.code : configStore.defaultQuality;
+    const fileType = q ?? typeStr;
+    const urls = await client.song.getPlayUrls([mid], fileType);
+    const info = urls[mid];
+    if (!info?.url) ctx.throw(502, info?.error || "无可用直链");
+    let name = ctx.query.name;
+    let singer = ctx.query.singer;
+    if (!name) {
+      try {
+        const detail = await client.song.getDetail([mid]);
+        const t = detail?.tracks?.[0];
+        if (t) {
+          name = t.name;
+          singer = singer ?? (t.singer ?? []).map((s) => s.name).join(" / ");
+        }
+      } catch {
+        // 详情失败不影响下载
+      }
+    }
+    await streamDownload(ctx, info.url, {
+      name,
+      singer,
+      ext: parseSongFileType(typeStr)?.ext,
+    });
+  });
+
   return router;
 }
 
@@ -334,6 +601,7 @@ function userRouter(client) {
   });
 
   router.post("/follow", async (ctx) => {
+    requireAdmin(ctx); // 关注操作影响登录账号, 需管理员密钥
     const body = ctx.request.body ?? {};
     const uin = String(body.uin ?? "");
     const follow = Boolean(body.follow ?? true);
@@ -348,6 +616,12 @@ function userRouter(client) {
 
 function loginRouter(client, store) {
   const router = new Router({ prefix: "/login" });
+
+  // 管理员鉴权: 登录/凭证管理必须持密钥访问
+  router.use(async (ctx, next) => {
+    requireAdmin(ctx);
+    await next();
+  });
 
   /** 同步内存凭证与 store (启动时已加载, 这里只保证运行时一致) */
   const syncClient = () => {
@@ -464,14 +738,92 @@ function loginRouter(client, store) {
   return router;
 }
 
+// ==================== 路由: 歌单/专辑/歌手 ====================
+
+function mediaRouter(client) {
+  const router = new Router();
+
+  /** 歌单内歌曲列表 (公开歌单匿名可读, 登录后可读私有歌单) */
+  router.get("/songlist/tracks", async (ctx) => {
+    const disstid = ctx.query.disstid ?? ctx.query.id;
+    if (!disstid) ctx.throw(400, "disstid 必填 (数字歌单 ID)");
+    ctx.body = ok(await client.playlist.getTracks(disstid));
+  });
+
+  /** 专辑内歌曲列表 */
+  router.get("/album/tracks", async (ctx) => {
+    const albummid = String(ctx.query.albummid ?? "");
+    if (!albummid) ctx.throw(400, "albummid 必填");
+    ctx.body = ok(await client.playlist.getAlbumTracks(albummid));
+  });
+
+  /** 用户歌单: 创建的 (含私有) + 收藏的 (需登录态) */
+  router.get("/user/songlists", async (ctx) => {
+    const uin = String(ctx.query.uin ?? "").trim();
+    if (!/^\d+$/.test(uin)) ctx.throw(400, "uin 必填 (数字 QQ 号)");
+    const created = await client.playlist.getUserCreatedPlaylists(uin);
+    const collected = await client.playlist.getUserCollectedPlaylists(uin);
+    ctx.body = ok({
+      hostname: created.hostname,
+      created: created.lists,
+      collected: collected.lists,
+    });
+  });
+
+  /** 歌手信息与热门歌曲 */
+  router.get("/singer", async (ctx) => {
+    const singermid = String(ctx.query.singermid ?? "");
+    if (!singermid) ctx.throw(400, "singermid 必填");
+    ctx.body = ok(await client.execute(client.playlist.getSingerInfo(singermid)));
+  });
+
+  return router;
+}
+
+// ==================== 路由: /config ====================
+
+/** defaultQuality 为公开可改项 (用户在 UI 中直接修改, 无需管理员) */
+function configRouter(client, configStore) {
+  const router = new Router();
+
+  router.get("/config", async (ctx) => {
+    ctx.set("Cache-Control", "no-store");
+    const stats = await getAccountStats(client);
+    const level = stats.level === "unknown" ? "none" : stats.level;
+    ctx.body = ok({
+      defaultQuality: configStore.toPublicJSON().defaultQuality,
+      accountLevel: level,
+      qualities: QUALITY_LIST.map((q) => ({
+        ...q,
+        minLevel: QUALITY_MIN_LEVEL[q.code] ?? "svip",
+      })),
+    });
+  });
+
+  router.put("/config", async (ctx) => {
+    const body = ctx.request.body ?? {};
+    if (body.defaultQuality !== undefined) {
+      if (!parseSongFileType(String(body.defaultQuality))) {
+        ctx.throw(400, `未知音质代码: ${body.defaultQuality}`);
+      }
+      await configStore.update({ defaultQuality: String(body.defaultQuality) });
+    }
+    ctx.body = ok(configStore.toPublicJSON());
+  });
+
+  return router;
+}
+
 // ==================== 应用装配 ====================
 
 function createApp(options = {}) {
   const devicePath = options.devicePath;
   const credentialPath = options.credentialPath;
+  const configPath = options.configPath;
 
-  // 1. 创建凭证存储, 优先于 Client 初始化(让 Client 直接持有 store 内的凭证)
+  // 1. 创建凭证/配置存储, 优先于 Client 初始化(让 Client 直接持有 store 内的凭证)
   const store = new CredentialStore({ path: credentialPath });
+  const configStore = new ConfigStore({ path: configPath });
 
   // 2. 创建 Client, 用 store 中的凭证进行初始化
   const client = new Client({
@@ -486,12 +838,15 @@ function createApp(options = {}) {
 
   // 3. 健康检查 + 首页
   const root = new Router();
-  root.get("/health", (ctx) => {
+  root.get("/health", async (ctx) => {
+    // 账号统计按等级汇总, 不暴露具体账号 (首页公开可访问)
+    const stats = await getAccountStats(client);
     ctx.body = ok({
       status: "ok",
       time: new Date().toISOString(),
       loggedIn: store.credential.isLoggedIn(),
-      musicid: store.credential.musicid || null,
+      accounts: stats.counts,
+      accountLevel: stats.level,
     });
   });
 
@@ -504,6 +859,7 @@ function createApp(options = {}) {
   let loginHtmlCache = null;
   root.get("/", (ctx) => {
     ctx.type = "text/html; charset=utf-8";
+    ctx.set("Cache-Control", "no-store"); // 前端迭代频繁, 防止浏览器缓存旧页面
     if (!indexHtmlCache) {
       indexHtmlCache = existsSync(INDEX_HTML_PATH)
         ? readFileSync(INDEX_HTML_PATH, "utf-8")
@@ -513,6 +869,7 @@ function createApp(options = {}) {
   });
   root.get("/login", (ctx) => {
     ctx.type = "text/html; charset=utf-8";
+    ctx.set("Cache-Control", "no-store");
     if (!loginHtmlCache) {
       loginHtmlCache = existsSync(LOGIN_HTML_PATH)
         ? readFileSync(LOGIN_HTML_PATH, "utf-8")
@@ -520,15 +877,32 @@ function createApp(options = {}) {
     }
     ctx.body = loginHtmlCache;
   });
+
+  // 本地静态资源 (自托管的 APlayer 等, 避免浏览器端依赖国外 CDN)
+  root.get("/vendor/:file", (ctx) => {
+    const file = String(ctx.params.file ?? "");
+    if (!/^[A-Za-z0-9._-]+$/.test(file)) ctx.throw(404);
+    const p = join(PUBLIC_DIR, "vendor", file);
+    if (!existsSync(p)) ctx.throw(404);
+    ctx.type = file.endsWith(".js")
+      ? "application/javascript; charset=utf-8"
+      : file.endsWith(".css")
+        ? "text/css; charset=utf-8"
+        : "application/octet-stream";
+    ctx.set("Cache-Control", "public, max-age=86400");
+    ctx.body = createReadStream(p);
+  });
   app.use(root.routes());
 
   // 4. 业务路由
   app.use(searchRouter(client).routes());
-  app.use(songRouter(client).routes());
+  app.use(songRouter(client, configStore).routes());
   app.use(userRouter(client).routes());
   app.use(loginRouter(client, store).routes());
+  app.use(mediaRouter(client).routes());
+  app.use(configRouter(client, configStore).routes());
 
-  return Object.assign(app, { client, store });
+  return Object.assign(app, { client, store, configStore });
 }
 
 // ==================== 启动入口 ====================
@@ -536,6 +910,7 @@ function createApp(options = {}) {
 const PORT = Number(process.env.PORT ?? 3300);
 const DEVICE_PATH = process.env.DEVICE_PATH ?? "./device.json";
 const CREDENTIAL_PATH = process.env.CREDENTIAL_PATH ?? "./credential.json";
+const CONFIG_PATH = process.env.CONFIG_PATH ?? "./config.json";
 const PLATFORM_STR = process.env.PLATFORM ?? "android";
 const PLATFORM =
   PLATFORM_STR === "desktop" ? Platform.DESKTOP :
@@ -545,6 +920,7 @@ const PLATFORM =
 const app = createApp({
   devicePath: DEVICE_PATH,
   credentialPath: CREDENTIAL_PATH,
+  configPath: CONFIG_PATH,
   platform: PLATFORM,
 });
 
@@ -552,5 +928,7 @@ app.listen(PORT, () => {
   console.log(`[qqmusic-api] listening on http://localhost:${PORT}`);
   console.log(`[qqmusic-api] device path     : ${DEVICE_PATH}`);
   console.log(`[qqmusic-api] credential path : ${CREDENTIAL_PATH}`);
+  console.log(`[qqmusic-api] config path     : ${CONFIG_PATH}`);
   console.log(`[qqmusic-api] platform        : ${PLATFORM}`);
+  console.log(`[qqmusic-api] admin key       : ${ADMIN_KEY ? "configured" : "NOT configured (管理接口不可用)"}`);
 });

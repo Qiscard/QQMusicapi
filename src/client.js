@@ -25,6 +25,7 @@ import { SongApi } from "./modules/song.js";
 import { SearchApi } from "./modules/search.js";
 import { UserApi } from "./modules/user.js";
 import { LoginApi } from "./modules/login.js";
+import { PlaylistApi } from "./modules/playlist.js";
 
 const MUSICU_URL = "https://u.y.qq.com/cgi-bin/musicu.fcg";
 const MUSICS_URL = "https://u.y.qq.com/cgi-bin/musics.fcg";
@@ -47,6 +48,7 @@ export class Client {
     this._search = null;
     this._user = null;
     this._login = null;
+    this._playlist = null;
 
     // 注入实际注册实现 (走 undici)
     this._qimeiManager.setRegisterHook(async (device, appVersion, sdkVersion) => {
@@ -100,6 +102,10 @@ export class Client {
   get login() {
     if (!this._login) this._login = new LoginApi(this);
     return this._login;
+  }
+  get playlist() {
+    if (!this._playlist) this._playlist = new PlaylistApi(this);
+    return this._playlist;
   }
 
   /** 关闭底层连接池 */

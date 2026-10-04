@@ -323,12 +323,87 @@
     .msg.err { background: #2a1717; border: 1px solid #5e2d2d; color: #f87171; word-break: break-all; }
 
     .hidden { display: none !important; }
+
+    /* 管理员密钥门 */
+    .key-gate {
+      position: fixed;
+      inset: 0;
+      background: #0f1115;
+      z-index: 100;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+    }
+    .key-gate .gate-card {
+      width: 360px;
+      background: #16191f;
+      border: 1px solid #2a313c;
+      border-radius: 12px;
+      padding: 32px 28px;
+      text-align: center;
+    }
+    .key-gate h2 {
+      margin: 0 0 8px;
+      font-size: 17px;
+      color: #4ea1ff;
+    }
+    .key-gate p {
+      margin: 0 0 18px;
+      font-size: 12px;
+      color: #6a7080;
+      line-height: 1.7;
+    }
+    .key-gate input {
+      width: 100%;
+      padding: 11px 14px;
+      background: #1a1e26;
+      border: 1px solid #2a313c;
+      border-radius: 8px;
+      color: #e6e6e6;
+      font-size: 14px;
+      outline: none;
+      box-sizing: border-box;
+      text-align: center;
+      letter-spacing: 1px;
+    }
+    .key-gate input:focus { border-color: #4ea1ff; }
+    .key-gate button {
+      width: 100%;
+      margin-top: 14px;
+      padding: 11px;
+      background: #4ea1ff;
+      color: #0f1115;
+      border: none;
+      border-radius: 8px;
+      font-size: 14px;
+      font-weight: 600;
+      cursor: pointer;
+    }
+    .key-gate button:hover { background: #6bb3ff; }
+    .key-gate .gate-err {
+      margin-top: 12px;
+      font-size: 12px;
+      color: #f87171;
+      min-height: 16px;
+    }
   </style>
 </head>
 <body>
+  <!-- 管理员密钥门: 校验通过后才显示后台内容 -->
+  <div class="key-gate" id="keyGate">
+    <div class="gate-card">
+      <h2>管理员访问</h2>
+      <p>此页面涉及账号凭证管理, 需要管理员密钥。<br>密钥由服务端 ADMIN_KEY 环境变量配置, 仅保存在本浏览器。</p>
+      <input type="password" id="gateKeyInput" placeholder="请输入管理员密钥" autocomplete="off" />
+      <button id="gateEnterBtn">进入管理后台</button>
+      <div class="gate-err" id="gateErr"></div>
+    </div>
+  </div>
+
   <header>
     <h1>QQ Music 登录</h1>
     <span class="status-dot" id="statusDot"></span><span id="statusText" style="font-size:12px;color:#8a909c;">检测中…</span>
+    <a href="#" id="keyBtn" onclick="return false;" style="color:#facc15;">设置密钥</a>
     <a href="/">返回首页</a>
   </header>
 
@@ -412,9 +487,75 @@
   <script>
     const $ = (id) => document.getElementById(id);
 
-    async function api(path, options) {
-      const r = await fetch(path, options);
-      const j = await r.json();
+    // ==================== 管理员密钥 ====================
+    // 密钥只保存在浏览器 localStorage, 由服务端环境变量 ADMIN_KEY 校验;
+    // 校验通过前整个后台界面被密钥门遮挡.
+    function getAdminKey() {
+      return localStorage.getItem("qm_admin_key") || "";
+    }
+    function setAdminKey(k) {
+      if (k) localStorage.setItem("qm_admin_key", k);
+      else localStorage.removeItem("qm_admin_key");
+    }
+
+    async function verifyKey(key) {
+      try {
+        const r = await fetch("/login/status", { headers: { "X-API-Key": key } });
+        if (r.status !== 200) return false;
+        const j = await r.json();
+        return j.code === 0;
+      } catch {
+        return false;
+      }
+    }
+
+    function showGate() {
+      $("keyGate").classList.remove("hidden");
+      $("gateErr").textContent = "";
+      $("gateKeyInput").value = "";
+      setTimeout(() => $("gateKeyInput").focus(), 50);
+    }
+
+    async function enterAdmin() {
+      $("keyGate").classList.add("hidden");
+      checkStatus();
+      loadQrCode();
+    }
+
+    async function tryEnter() {
+      const key = $("gateKeyInput").value.trim();
+      if (!key) { $("gateErr").textContent = "请输入密钥"; return; }
+      $("gateEnterBtn").disabled = true;
+      $("gateErr").textContent = "校验中…";
+      $("gateErr").style.color = "#8a909c";
+      const ok = await verifyKey(key);
+      $("gateEnterBtn").disabled = false;
+      $("gateErr").style.color = "";
+      if (ok) {
+        setAdminKey(key);
+        enterAdmin();
+      } else {
+        $("gateErr").textContent = "密钥错误或服务未配置 ADMIN_KEY";
+      }
+    }
+
+    $("gateEnterBtn").addEventListener("click", tryEnter);
+    $("gateKeyInput").addEventListener("keydown", (e) => {
+      if (e.key === "Enter") tryEnter();
+    });
+
+    async function api(path, options = {}) {
+      const headers = { ...(options.headers || {}) };
+      const key = getAdminKey();
+      if (key) headers["X-API-Key"] = key;
+      const r = await fetch(path, { ...options, headers });
+      let j;
+      try { j = await r.json(); } catch { throw new Error(`HTTP ${r.status}`); }
+      if (r.status === 401) {
+        // 密钥失效: 弹出密钥门重新校验
+        showGate();
+        throw new Error("需要管理员密钥");
+      }
       if (j.code !== 0) throw new Error(j.message || `code ${j.code}`);
       return j.data;
     }
@@ -836,9 +977,21 @@
       }
     });
 
-    // 启动
-    checkStatus();
-    loadQrCode();
+    $("keyBtn").addEventListener("click", () => {
+      // 重新弹出密钥门 (可更换密钥)
+      showGate();
+    });
+
+    // 启动: 已存密钥则静默校验, 通过直接进入, 否则停在密钥门
+    (async function gateInit() {
+      const stored = getAdminKey();
+      if (stored && await verifyKey(stored)) {
+        enterAdmin();
+      } else {
+        if (stored) setAdminKey(""); // 失效密钥清除
+        showGate();
+      }
+    })();
   </script>
 </body>
 </html>

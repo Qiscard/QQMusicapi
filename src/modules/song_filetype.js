@@ -29,12 +29,21 @@ export class SongFileType {
 }
 
 const CODE_MAP = {};
+const NAME_MAP = {};
 for (const k of Object.keys(SongFileType)) {
   const v = SongFileType[k];
-  if (v instanceof SongFileType) CODE_MAP[v.code] = v;
+  if (v instanceof SongFileType) {
+    CODE_MAP[v.code] = v;
+    NAME_MAP[k.toUpperCase()] = v;
+  }
 }
 
-/** 根据 code 字符串还原枚举(找不到时返回 undefined) */
+/**
+ * 根据 code 字符串还原枚举(找不到时返回 undefined).
+ * 同时兼容 wire code (如 "M500") 与静态属性名 (如 "MP3_128",
+ * 上游 README 文档即使用该写法), 统一归一化为实例.
+ */
 export function parseSongFileType(code) {
-  return CODE_MAP[code];
+  const c = String(code ?? "").toUpperCase();
+  return CODE_MAP[c] ?? NAME_MAP[c];
 }

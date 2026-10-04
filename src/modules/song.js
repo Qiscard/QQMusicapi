@@ -186,6 +186,7 @@ export class SongApi extends ApiModule {
   async getPlayUrls(mids, fileType = SongFileType.MP3_128) {
     if (mids.length === 0) return {};
     const type = typeof fileType === "string" ? fileType : fileType.code;
+    const ext = this._inferExt(type);
 
     // 1. 将 song_id 转换为 mid
     const { midList, idToMidMap } = await this._resolveToMids(mids);
@@ -200,51 +201,81 @@ export class SongApi extends ApiModule {
     const validMids = midList.filter(Boolean);
     if (validMids.length === 0) return {};
 
-    // 2. 用 mid 调用 vkey 接口
-    const device = await this._client.getDevice();
-    const data = await this._client.execute(
-      this.getUrls(validMids, type, { guid: device.openUdid }),
-    );
-
-    // 3. 解析响应, 并把 key 从 mid 回填为原始入参
     const map = {};
-    const sip = Array.isArray(data?.sip) && data.sip.length > 0 ? data.sip : null;
-    for (const item of data?.midurlinfo ?? []) {
-      const mid = item.songmid;
-      const origKey = midToOriginal[mid] ?? mid;
-      if (!item.purl) {
-        map[origKey] = {
-          url: "",
-          vkey: item.vkey,
-          size: 0,
-          error:
-            item.result === 104003
-              ? "无权限 / 需要 VIP"
-              : item.result === 104004
-                ? "VKey 获取失败"
-                : "无可用直链",
-        };
-        continue;
+    let pending = [...validMids];
+
+    /** 解析 vkey 响应, 填充 map; 返回仍未拿到直链的 mid 列表 */
+    const fillFromData = (data) => {
+      const sips = (Array.isArray(data?.sip) ? data.sip : []).filter(Boolean);
+      // ws 前缀域名是备用线路, 优先使用正常域
+      const goodSips = sips.filter((s) => !/^https?:\/\/ws/i.test(s));
+      const sipList = goodSips.length > 0 ? goodSips : sips;
+      const sip = sipList.length > 0 ? sipList : null;
+      const failed = [];
+      for (const item of data?.midurlinfo ?? []) {
+        const mid = item.songmid;
+        if (!mid) continue;
+        const origKey = midToOriginal[mid] ?? mid;
+        if (!item.purl) {
+          // 已成功的条目不允许被后续尝试覆盖
+          if (!map[origKey]?.url) {
+            map[origKey] = {
+              url: "",
+              vkey: item.vkey,
+              size: 0,
+              error:
+                item.result === 104003
+                  ? "无权限 (需要 VIP 或更高会员等级)"
+                  : item.result === 104004
+                    ? "VKey 获取失败"
+                    : "无可用直链",
+            };
+          }
+          failed.push(mid);
+          continue;
+        }
+        let url;
+        if (/^https?:\/\//i.test(item.purl)) {
+          url = item.purl;
+        } else if (sip) {
+          url = sip[Math.floor(Math.random() * sip.length)] + item.purl;
+        } else {
+          url = SongApi.SONG_URL_FALLBACK_DOMAIN + item.purl;
+        }
+        map[origKey] = { url, vkey: item.vkey, size: 0, error: undefined };
       }
-      let url;
-      if (/^https?:\/\//i.test(item.purl)) {
-        url = item.purl;
-      } else if (sip) {
-        url = sip[Math.floor(Math.random() * sip.length)] + item.purl;
-      } else {
-        url = SongApi.SONG_URL_FALLBACK_DOMAIN + item.purl;
-      }
-      map[origKey] = {
-        url,
-        vkey: item.vkey,
-        size: 0,
-        error: undefined,
-      };
+      return failed;
+    };
+
+    // 2. 主路径: UrlGetVkey (Android 平台, 含 QIMEI/会话)
+    const device = await this._client.getDevice();
+    try {
+      const data = await this._client.execute(
+        this.getUrls(validMids, type, { guid: device.openUdid }),
+      );
+      pending = fillFromData(data);
+    } catch {
+      // 主路径整体失败时继续尝试备用路径
     }
+
+    // 3. 备用路径: vkey.GetVkeyServer/CgiGetVkey (WEB 风格 comm + authst).
+    //    该接口存在瞬时失败率, 失败条目最多再试 2 次.
+    for (let attempt = 0; attempt < 2 && pending.length > 0; attempt++) {
+      try {
+        const data = await this._client.execute(
+          this._buildCgiVkeyRequest(pending, type, ext),
+        );
+        pending = fillFromData(data);
+      } catch {
+        break;
+      }
+      if (pending.length > 0) await new Promise((r) => setTimeout(r, 300));
+    }
+
     // 4. 对转换失败的 song_id (mid 为空) 补充错误信息
     for (const m of mids) {
       const orig = String(m);
-      if (midToOriginal[idToMidMap[orig]] === orig) continue; // 已处理
+      if (map[orig]) continue;
       if (SongApi._isSongId(orig) && !idToMidMap[orig]) {
         map[orig] = {
           url: "",
@@ -255,6 +286,33 @@ export class SongApi extends ApiModule {
       }
     }
     return map;
+  }
+
+  /**
+   * 备用取链请求: vkey.GetVkeyServer / CgiGetVkey.
+   * 参考 jsososo/QQMusicApi 的实现: WEB 风格 comm, 携带 authst (musickey),
+   * platform 参数用 "20" (主路径 UrlGetVkey 用 "23").
+   */
+  _buildCgiVkeyRequest(mids, code, ext) {
+    const cred = this._client.credential;
+    const uin = cred?.strMusicid || cred?.musicid || "";
+    const param = {
+      filename: mids.map((m) => `${code}${m}${m}${ext}`),
+      guid: String(Math.floor(Math.random() * 10000000) + 1000000),
+      songmid: mids,
+      songtype: new Array(mids.length).fill(0),
+      uin: String(uin),
+      loginflag: 1,
+      platform: "20",
+    };
+    const comm = { uin: String(uin), format: "json", ct: 19, cv: 0 };
+    if (cred?.musickey) comm.authst = cred.musickey;
+    return this._buildRequest(
+      "vkey.GetVkeyServer",
+      "CgiGetVkey",
+      param,
+      { comm, overrideComm: true, platform: Platform.WEB },
+    );
   }
 
   /**
