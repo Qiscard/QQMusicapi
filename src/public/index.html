@@ -15,23 +15,49 @@
       min-height: 100vh;
     }
     header {
-      padding: 14px 24px;
+      padding: 10px 24px;
       background: #16191f;
       border-bottom: 1px solid #232830;
       display: flex;
       align-items: center;
-      gap: 14px;
+      justify-content: space-between;
+      gap: 8px 16px;
       flex-wrap: wrap;
+    }
+    .h-left {
+      display: flex;
+      align-items: center;
+      gap: 12px;
+      min-width: 0;
+      flex-wrap: wrap;
+    }
+    .h-actions {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      flex-wrap: wrap;
+      margin-left: auto;
     }
     header h1 {
       margin: 0;
-      font-size: 18px;
+      font-size: 17px;
       font-weight: 600;
       color: #4ea1ff;
+      white-space: nowrap;
     }
     header .meta {
       font-size: 12px;
       color: #8a909c;
+      white-space: nowrap;
+    }
+    /* 顶栏控件统一 32px 高, 8px 间距 */
+    header .queue-toggle, header a.login-link {
+      height: 32px;
+      box-sizing: border-box;
+      display: inline-flex;
+      align-items: center;
+      padding: 0 12px;
+      white-space: nowrap;
     }
     .status-dot {
       display: inline-block;
@@ -45,10 +71,9 @@
     .status-dot.online { background: #4ade80; }
     .status-dot.offline { background: #f87171; }
     .q-wrap {
-      margin-left: auto;
       display: flex;
       align-items: center;
-      gap: 8px;
+      gap: 6px;
       font-size: 13px;
       color: #8a909c;
     }
@@ -57,7 +82,9 @@
       border: 1px solid #2a313c;
       color: #e6e6e6;
       border-radius: 6px;
-      padding: 6px 10px;
+      padding: 0 10px;
+      height: 32px;
+      box-sizing: border-box;
       font-size: 13px;
       outline: none;
       cursor: pointer;
@@ -68,7 +95,7 @@
       font-size: 13px;
       color: #4ea1ff;
       text-decoration: none;
-      padding: 6px 14px;
+      padding: 0 12px;
       border: 1px solid #2a313c;
       border-radius: 6px;
       transition: all .15s;
@@ -98,7 +125,7 @@
       background: #1a1e26;
     }
 
-    /* 整体布局: 左 3/4 功能区 + 右 1/4 播放器区 */
+    /* 整体布局: 主列撑满剩余, 播放器列固定 320px */
     .layout {
       max-width: 1320px;
       margin: 0 auto;
@@ -107,13 +134,16 @@
       gap: 16px;
       align-items: flex-start;
     }
-    .main-col { flex: 3; min-width: 0; }
+    .main-col { flex: 1 1 0; min-width: 0; }
     .player-col {
-      flex: 1;
-      min-width: 272px;
-      max-width: 350px;
+      flex: 0 0 320px;
+      width: 320px;
+      max-width: none;
       position: sticky;
       top: 14px;
+      align-self: flex-start;
+      border-radius: 10px;
+      transition: opacity .28s ease, transform .28s ease;
     }
     .np-title { font-size: 15px; font-weight: 600; margin-bottom: 4px; word-break: break-all; }
     .np-singer { font-size: 12px; color: #8a909c; margin-bottom: 12px; word-break: break-all; min-height: 14px; }
@@ -187,10 +217,52 @@
       font-size: 11px; color: #6a7080;
       overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
     }
-    @media (max-width: 980px) {
-      .layout { flex-direction: column; }
-      .player-col { position: static; max-width: none; width: 100%; }
+    /* ==================== 手机端专用 (PC 端元素隐藏, 布局不变; 媒体查询统一置于样式表末尾) ==================== */
+    #mobileMenuBtn, #mobileMenu, #miniPlayerToggle, .mobile-nav { display: none; }
+
+    /* 公告/联系弹窗 */
+    .site-modal {
+      position: fixed; inset: 0; z-index: 90;
+      background: rgba(0, 0, 0, .55);
+      display: flex; align-items: center; justify-content: center;
     }
+    .site-modal .modal-card {
+      width: min(560px, calc(100vw - 24px));
+      max-height: 82vh; overflow-y: auto;
+      background: #16191f; border: 1px solid #2a313c; border-radius: 12px;
+      padding: 14px 16px;
+    }
+    .modal-head {
+      display: flex; align-items: center; justify-content: space-between;
+      margin-bottom: 10px; font-size: 15px;
+    }
+    .modal-foot { display: flex; gap: 8px; align-items: center; margin-top: 12px; }
+    .modal-body.md { font-size: 13px; line-height: 1.8; color: #c0c5cf; }
+    .modal-body.md h1, .modal-body.md h2, .modal-body.md h3, .modal-body.md h4 { margin: 10px 0 6px; color: #e6e6e6; }
+    .modal-body.md p { margin: 6px 0; }
+    .modal-body.md pre { background: #0f1115; padding: 10px; border-radius: 6px; overflow-x: auto; }
+    .modal-body.md a { color: #4ea1ff; }
+    .modal-body.md img { max-width: 100%; border-radius: 6px; }
+    .modal-body.md code { background: #0f1115; padding: 1px 5px; border-radius: 4px; font-family: monospace; }
+    .contact-cards { display: flex; gap: 12px; flex-wrap: wrap; }
+    .contact-card {
+      width: 150px; text-align: center; text-decoration: none;
+      background: #1a1e26; border: 1px solid #2a313c; border-radius: 10px;
+      padding: 12px 10px; color: #c0c5cf; font-size: 13px;
+      display: flex; flex-direction: column; gap: 8px; align-items: center;
+      transition: border-color .15s;
+    }
+    .contact-card:hover { border-color: #4ea1ff; }
+    .contact-card img { width: 120px; height: 120px; object-fit: contain; border-radius: 6px; background: #232830; }
+    body.light .site-modal .modal-card { background: #ffffff; border-color: #d9dee6; }
+    body.light .modal-body.md { color: #3d4550; }
+    body.light .modal-body.md h1, body.light .modal-body.md h2,
+    body.light .modal-body.md h3, body.light .modal-body.md h4 { color: #1f242c; }
+    body.light .modal-body.md pre, body.light .modal-body.md code { background: #f3f5f8; }
+    body.light .contact-card { background: #f3f5f8; border-color: #d9dee6; color: #3d4550; }
+    body.light .contact-card img { background: #e9edf2; }
+
+    body.light #mobileMenuBtn, body.light #mobileMenu { background: #ffffff; border-color: #d9dee6; color: #1f242c; }
 
     .container {
       max-width: 1100px;
@@ -207,6 +279,7 @@
     }
     .input-row input {
       flex: 1;
+      min-width: 0;
       padding: 12px 14px;
       background: #1a1e26;
       border: 1px solid #2a313c;
@@ -228,6 +301,8 @@
       font-weight: 600;
       cursor: pointer;
       transition: background .15s;
+      text-align: center;
+      white-space: nowrap;
     }
     .input-row button:hover:not(:disabled) { background: #6bb3ff; }
     .input-row button:disabled { background: #2a313c; color: #6a7080; cursor: not-allowed; }
@@ -244,10 +319,10 @@
       white-space: nowrap;
     }
 
-    /* 补全下拉 */
+    /* 补全下拉: 宽度对齐整个输入行, 不与按钮冲突 */
     .ac-box {
       position: absolute;
-      top: 48px; left: 0; right: 110px;
+      top: 48px; left: 0; right: 0;
       background: #1a1e26;
       border: 1px solid #2a313c;
       border-radius: 8px;
@@ -268,8 +343,10 @@
     .ac-item .ac-singer { color: #6a7080; font-size: 12px; white-space: nowrap; }
 
     /* 搜索/歌单结果表格 */
+    .table-wrap { overflow-x: auto; }
     .song-table {
       width: 100%;
+      min-width: 660px;
       border-collapse: collapse;
       font-size: 13px;
     }
@@ -277,12 +354,12 @@
       text-align: left;
       color: #6a7080;
       font-weight: 500;
-      padding: 8px 10px;
+      padding: 9px 10px;
       border-bottom: 1px solid #232830;
       white-space: nowrap;
     }
     .song-table td {
-      padding: 9px 10px;
+      padding: 11px 10px;
       border-bottom: 1px solid #1d222b;
       vertical-align: middle;
     }
@@ -291,18 +368,39 @@
     .song-table .t-name {
       font-weight: 500;
       max-width: 320px;
+      display: flex;
+      align-items: center;
+      gap: 4px;
+      min-width: 0;
+    }
+    .song-table .t-sub { color: #8a909c; font-size: 12px; }
+    .song-table .t-scroll {
+      display: block;
+      flex: 1;
+      min-width: 0;
       overflow: hidden;
       text-overflow: ellipsis;
       white-space: nowrap;
     }
-    .song-table .t-sub { color: #8a909c; font-size: 12px; }
+    .song-table .t-scroll.marquee { animation: tmarquee 8s linear infinite alternate; }
+    @keyframes tmarquee {
+      0%, 15% { transform: translateX(0); }
+      85%, 100% { transform: translateX(var(--shift, -40px)); }
+    }
+    .song-table .icon-btn {
+      width: 26px; height: 26px; padding: 0; margin-right: 0;
+      display: inline-flex; align-items: center; justify-content: center;
+      border-radius: 6px;
+    }
+    .song-table .icon-btn svg { display: block; width: 16px; height: 16px; fill: currentColor; }
     .song-table .t-idx { color: #5a6170; width: 34px; }
     .song-table .t-actions { white-space: nowrap; }
     .song-table .t-actions button {
-      padding: 5px 12px;
+      padding: 6px 14px;
       margin-right: 6px;
       border-radius: 5px;
       font-size: 12px;
+      text-align: center;
       border: 1px solid #2a313c;
       background: #232830;
       color: #c0c5cf;
@@ -334,6 +432,7 @@
       display: grid;
       grid-template-columns: repeat(auto-fill, minmax(160px, 1fr));
       gap: 12px;
+      width: 100%;
     }
     .pl-item {
       background: #1a1e26;
@@ -365,6 +464,7 @@
       gap: 16px;
       align-items: center;
       margin-bottom: 16px;
+      flex-wrap: wrap;
     }
     .pl-head img {
       width: 110px; height: 110px;
@@ -372,7 +472,7 @@
       object-fit: cover;
       background: #232830;
     }
-    .pl-head .pl-info { flex: 1; }
+    .pl-head .pl-info { flex: 1; min-width: 200px; }
     .pl-head .pl-title { font-size: 18px; font-weight: 600; margin-bottom: 6px; }
     .pl-head .pl-meta { font-size: 13px; color: #8a909c; }
     .pl-head .pl-actions { margin-top: 10px; }
@@ -589,6 +689,8 @@
       background: #232830;
       color: #c0c5cf;
       cursor: pointer;
+      text-align: center;
+      white-space: nowrap;
     }
     .q-mini:hover { border-color: #4ea1ff; color: #4ea1ff; }
     .queue-list { overflow-y: auto; flex: 1; padding: 4px 0; }
@@ -628,6 +730,8 @@
       color: #c0c5cf;
       cursor: pointer;
       transition: all .15s;
+      text-align: center;
+      white-space: nowrap;
     }
     .toolbar button:hover { border-color: #4ea1ff; color: #4ea1ff; }
     .toolbar button.primary {
@@ -696,6 +800,26 @@
       background: #232830;
       color: #c0c5cf;
       cursor: pointer;
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+      white-space: nowrap;
+    }
+
+    /* 全局按钮垂直居中: 统一内部元素水平/垂直居中 */
+    .song-table .t-actions button,
+    .toolbar button,
+    .q-mini,
+    .input-row button,
+    .pager button,
+    .queue-toggle,
+    header a.login-link,
+    .actions button,
+    #mobileMenuBtn {
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+      box-sizing: border-box;
     }
     .pager button:hover:not(:disabled) { border-color: #4ea1ff; color: #4ea1ff; }
     .pager button:disabled { opacity: .4; cursor: not-allowed; }
@@ -772,22 +896,185 @@
     body.light .aplayer .aplayer-list ol li.aplayer-list-light .aplayer-list-author { color: #2b7fd4 !important; }
     body.light .aplayer .aplayer-list ol li .aplayer-list-author { color: #8b94a1 !important; }
     body.light .aplayer .aplayer-list ol li .aplayer-list-index { color: #8b94a1 !important; }
+
+    /* ==================== 手机端样式 (置于末尾: 确保覆盖上方全部基础规则) ==================== */
+    @media (max-width: 980px) {
+      /* column 布局: 交叉轴必须拉伸, 否则子项宽度收缩成内容宽, 右侧留白 */
+      .layout { flex-direction: column; align-items: stretch; }
+      .main-col { width: 100%; }
+      .player-col { position: static; max-width: none; width: 100%; }
+    }
+    @media (max-width: 760px) {
+      /* ☰ 第一层: 侧边栏 + 主题/公告/音质; 第二层: 页签 */
+      body > header { display: none; }
+      body > .tabs { display: none; }
+      .mobile-nav { display: block; padding: 6px 8px 0; }
+      .m-row1 { display: flex; align-items: center; gap: 6px; }
+      #mobileMenuBtn {
+        display: flex; align-items: center; justify-content: center;
+        flex-shrink: 0; width: 40px; height: 34px;
+        border: 1px solid #2a313c; background: #16191f; color: #e6e6e6;
+        border-radius: 8px; font-size: 15px; cursor: pointer; position: static;
+      }
+      .m-actions {
+        display: flex; align-items: center; gap: 6px;
+        margin-left: auto; min-width: 0;
+      }
+      .m-actions .queue-toggle { height: 34px; padding: 0 10px; font-size: 12px; }
+      .m-actions .q-wrap span { display: none; }
+      .m-actions .q-wrap select {
+        height: 34px; max-width: 104px; padding: 0 8px;
+        font-size: 12px; box-sizing: border-box;
+      }
+      .m-row2 { display: flex; gap: 6px; margin-top: 6px; }
+      .m-row2 .tabs {
+        display: flex; gap: 6px; flex: 1; min-width: 0;
+        padding: 0; margin: 0; max-width: none;
+      }
+      .m-row2 .tabs button {
+        flex: 1; padding: 7px 4px; font-size: 12px; font-weight: 500;
+        border: 1px solid #2a313c; border-radius: 8px;
+        white-space: nowrap; min-width: 0;
+      }
+      /* 侧边抽屉: 从左滑入 */
+      #mobileMenu {
+        display: block; position: fixed; top: 0; left: 0; bottom: 0;
+        width: min(280px, 80vw); max-height: none;
+        overflow-y: auto; z-index: 80;
+        background: #16191f; border-right: 1px solid #2a313c; border-radius: 0;
+        padding: 12px;
+        transform: translateX(-105%); transition: transform .28s ease;
+      }
+      body.m-nav-open #mobileMenu { transform: translateX(0); }
+      body.m-nav-open::after {
+        content: ""; position: fixed; inset: 0; z-index: 75;
+        background: rgba(0, 0, 0, .45);
+      }
+      #mobileMenu header {
+        display: flex !important; flex-wrap: wrap; gap: 8px;
+        border: none; background: transparent; padding: 0 0 10px;
+        border-bottom: 1px solid #232830; margin-bottom: 10px;
+      }
+      #mobileMenu header h1 { font-size: 15px; }
+      #mobileMenu header .queue-toggle, #mobileMenu header a.login-link {
+        height: 34px; padding: 0 10px; font-size: 12px;
+      }
+
+      /* 整体紧凑 */
+      .layout { padding: 86px 6px 68px; }
+      .input-row { gap: 6px; margin-bottom: 10px; }
+      .input-row input { flex: 1; padding: 8px 10px; font-size: 13px; height: 36px; box-sizing: border-box; }
+      .input-row button { padding: 8px 14px; font-size: 13px; white-space: nowrap; height: 36px; box-sizing: border-box; flex-shrink: 0; }
+      .input-row .hint { white-space: normal; font-size: 11px; }
+      .section { padding: 10px; margin-bottom: 10px; }
+      .section h2 { font-size: 13px; margin-bottom: 8px; }
+      .toolbar { margin-bottom: 6px; gap: 6px; flex-wrap: wrap; }
+      .toolbar button { padding: 4px 10px; font-size: 11px; white-space: nowrap; }
+      .quality-grid { grid-template-columns: repeat(auto-fill, minmax(150px, 1fr)); gap: 8px; }
+      .pl-grid { grid-template-columns: repeat(auto-fill, minmax(118px, 1fr)); gap: 8px; }
+      .pager { margin-top: 10px; }
+      .pager button { padding: 4px 12px; }
+
+      /* 列表卡片式两行布局: 第一行歌名, 第二行歌手+按钮, 无横向滚动 */
+      .table-wrap { overflow-x: visible; }
+      .song-table, .song-table tbody { display: block; min-width: 0; font-size: 12px; }
+      .song-table thead { display: none; }
+      .song-table .col-album, .song-table .t-album, .song-table td.t-idx { display: none; }
+      .song-table tr {
+        display: grid;
+        grid-template-columns: 24px minmax(0, 1fr) auto;
+        align-items: center;
+        gap: 2px 6px;
+        padding: 5px 4px;
+        border-bottom: 1px solid #1d222b;
+      }
+      .song-table td { display: block; padding: 0; border-bottom: none; }
+      .song-table td[colspan] { grid-column: 1 / -1; }
+      .song-table td:first-child { grid-column: 1; grid-row: 1 / span 2; }
+      .song-table td.t-name { grid-column: 2 / 4; grid-row: 1; max-width: none; }
+      .song-table td.t-sub { grid-column: 2; grid-row: 2; max-width: none; }
+      .song-table td.t-actions {
+        grid-column: 3; grid-row: 2;
+        display: flex; gap: 4px; justify-content: flex-end;
+      }
+      .song-table .t-actions button { padding: 0; margin-right: 0; }
+
+      /* 播放器: 底部全宽 + 压薄高度 */
+      .player-col {
+        position: fixed; top: auto; left: 0; right: 0; bottom: 0;
+        width: 100%; max-width: none; z-index: 70; margin: 0;
+        border-radius: 0; background: #16191f; border-top: 1px solid #2a313c;
+      }
+      .player-col .player-panel {
+        margin-bottom: 0; border-radius: 0; border: none; background: transparent;
+        padding: 4px 8px; max-height: 48vh;
+      }
+      body.m-player-open .player-col .player-panel { max-height: min(63vh, 520px); overflow-y: auto; }
+      .lyrics-box { height: clamp(160px, 30vh, 280px); }
+      #aplayer { font-size: 12px; }
+      #miniPlayerToggle {
+        display: flex; align-items: center; justify-content: space-between;
+        width: 100%; padding: 3px 6px 4px;
+        background: transparent; border: none; color: #8a909c;
+        font-size: 11px; cursor: pointer;
+      }
+      .layout { padding-bottom: 72px; }
+      /* 迷你播放器默认折叠: 只显示控制条, 展开后完整显示 */
+      #miniPlayerToggle .mini-chev { transition: transform .2s; }
+      body.m-player-open #miniPlayerToggle .mini-chev { transform: rotate(180deg); }
+      body:not(.m-player-open) .player-col .np-title,
+      body:not(.m-player-open) .player-col .np-singer,
+      body:not(.m-player-open) .player-col .lyric-wrap,
+      body:not(.m-player-open) .player-col .panel-toggle,
+      body:not(.m-player-open) .player-col .panel-block + .panel-block { display: none; }
+      /* 全部按钮禁止自动换行 */
+      header .queue-toggle, header a.login-link,
+      .t-actions button, .toolbar button, .pager button,
+      .form-row button, .actions button, #mobileMenuBtn { white-space: nowrap; }
+      /* 右侧抽屉与 Toast 避开底部播放器 */
+      .queue-drawer { bottom: 58px; right: 6px; width: min(300px, calc(100vw - 12px)); }
+      .toast { bottom: 64px; }
+
+      /* 播放器圆角 + 展开过渡 */
+      .player-col {
+        border-radius: 14px 14px 0 0;
+        transition: border-radius .28s ease, box-shadow .28s ease;
+      }
+      body.m-player-open .player-col {
+        box-shadow: 0 -4px 20px rgba(0,0,0,.3);
+      }
+    }
+    body.light #mobileMenuBtn, body.light #mobileMenu { background: #ffffff; border-color: #d9dee6; color: #1f242c; }
   </style>
 </head>
 <body>
   <script>try{if(localStorage.getItem("qm_theme")==="light")document.body.classList.add("light")}catch(e){}</script>
-  <header>
-    <h1>QQ Music 工具</h1>
-    <span class="meta"><span class="status-dot" id="statusDot"></span><span id="statusText">检测中…</span></span>
-    <span class="meta" id="loginMeta"></span>
-    <div class="q-wrap">
-      <span>默认音质</span>
-      <select id="qualitySelect"></select>
+  <div id="mobileNav" class="mobile-nav">
+    <div class="m-row1">
+      <button id="mobileMenuBtn" type="button">☰</button>
+      <div class="m-actions" id="mActions"></div>
     </div>
-    <button class="queue-toggle" id="themeToggle" title="切换黑夜/白天主题">☀️</button>
-    <button class="queue-toggle" id="queueToggleBtn">下载队列<span class="queue-badge hidden" id="queueBadge">0</span></button>
-    <button class="queue-toggle" id="dlSettingsBtn" style="color:#facc15;">下载设置</button>
-    <a class="login-link" href="/login">登录管理</a>
+    <div class="m-row2" id="mTabRow"></div>
+  </div>
+  <div id="mobileMenu"></div>
+  <header>
+    <div class="h-left">
+      <h1>QQ Music 工具</h1>
+      <span class="meta"><span class="status-dot" id="statusDot"></span><span id="statusText">检测中…</span></span>
+      <span class="meta" id="loginMeta"></span>
+    </div>
+    <div class="h-actions">
+      <div class="q-wrap" id="qualityWrap">
+        <span>默认音质</span>
+        <select id="qualitySelect"></select>
+      </div>
+      <button class="queue-toggle" id="themeToggle" title="切换黑夜/白天主题">☀️</button>
+      <button class="queue-toggle" id="queueToggleBtn">下载队列<span class="queue-badge hidden" id="queueBadge">0</span></button>
+      <button class="queue-toggle" id="dlSettingsBtn" style="color:#facc15;">下载设置</button>
+      <button class="queue-toggle hidden" id="announcementBtn">公告</button>
+      <button class="queue-toggle hidden" id="contactBtn">联系</button>
+      <a class="login-link" href="/login">登录管理</a>
+    </div>
   </header>
 
   <div class="tabs">
@@ -800,11 +1087,12 @@
    <div class="main-col">
     <!-- ============ 搜索页 ============ -->
     <div class="tab-page" id="page-search">
-      <div class="input-row">
-        <input id="searchInput" type="text" name="music_keyword" placeholder="输入歌名 / 歌手, 回车搜索" autocomplete="off" spellcheck="false" />
-        <button id="searchBtn">搜索</button>
-      </div>
-      <div class="ac-box hidden" id="acBox"></div>
+      <!-- autocomplete=new-password 是抑制 Chrome 自动填充下拉的有效写法; onsubmit 防止回车触发表单提交 -->
+      <form class="input-row" autocomplete="off" onsubmit="event.preventDefault();">
+        <input id="searchInput" type="text" name="music_keyword" placeholder="输入歌名 / 歌手, 回车搜索" autocomplete="new-password" autocapitalize="off" spellcheck="false" />
+        <button id="searchBtn" type="button">搜索</button>
+        <div class="ac-box hidden" id="acBox"></div>
+      </form>
       <div id="searchResultWrap" class="section hidden">
         <h2>搜索结果</h2>
         <div class="toolbar">
@@ -812,30 +1100,32 @@
           <label><input type="checkbox" id="searchSelAll" /> 全选</label>
           <span class="hint" id="searchSelHint"></span>
         </div>
-        <table class="song-table">
-          <thead><tr><th style="width:30px"></th><th>#</th><th>歌曲</th><th>歌手</th><th>专辑</th><th style="width:210px">操作</th></tr></thead>
-          <tbody id="searchTbody"></tbody>
-        </table>
+        <div class="table-wrap">
+          <table class="song-table">
+            <thead><tr><th style="width:30px"></th><th>#</th><th>歌曲</th><th>歌手</th><th class="col-album">专辑</th><th style="width:210px">操作</th></tr></thead>
+            <tbody id="searchTbody"></tbody>
+          </table>
+        </div>
         <div class="pager" id="searchPager">
           <button id="searchPrevBtn">上一页</button>
           <span id="searchPageInfo">第 1 页</span>
           <button id="searchNextBtn">下一页</button>
         </div>
       </div>
-      <p class="dl-note hidden" id="searchDlNote">下载使用右上角选定的默认音质; 点击行可进入解析页选择 17 种音质。</p>
+      <p class="dl-note hidden" id="searchDlNote">下载使用右上角选定的默认音质; 点击行可进入解析页选择各音质。</p>
     </div>
 
     <!-- ============ 歌单页 ============ -->
     <div class="tab-page hidden" id="page-playlist">
-      <div class="input-row">
-        <input id="plInput" type="text" name="playlist_link" placeholder="粘贴歌单链接或歌单 ID (例如 https://y.qq.com/n/ryqq/playlist/8523075134)" autocomplete="off" spellcheck="false" />
-        <button id="plLoadBtn">载入歌单</button>
-      </div>
-      <div class="input-row">
-        <input id="uinInput" type="text" name="qq_uin" placeholder="我的 QQ 号 (需已在登录管理页登录, 列出该账号歌单)" autocomplete="off" spellcheck="false" style="max-width:420px" />
-        <button id="uinLoadBtn" class="ghost">获取用户歌单</button>
-        <span class="hint">创建的歌单公开可查; 收藏歌单需本服务已登录该账号</span>
-      </div>
+      <form class="input-row" autocomplete="off" onsubmit="event.preventDefault();">
+        <input id="plInput" type="text" name="playlist_link" placeholder="粘贴歌单链接或歌单 ID" autocomplete="new-password" autocapitalize="off" spellcheck="false" />
+        <button id="plLoadBtn" type="button">载入歌单</button>
+      </form>
+      <form class="input-row" autocomplete="off" onsubmit="event.preventDefault();">
+        <input id="uinInput" type="text" name="qq_uin" placeholder="填写歌单QQ" autocomplete="new-password" autocapitalize="off" spellcheck="false" />
+        <button id="uinLoadBtn" type="button" class="ghost">获取用户歌单</button>
+      </form>
+      <p class="hint" style="margin:2px 0 10px;max-width:420px;">创建的歌单公开可查; 收藏歌单需本服务已登录该账号</p>
       <div class="section hidden" id="plUserSection">
         <h2>用户歌单</h2>
         <div class="pl-grid" id="plUserGrid"></div>
@@ -857,19 +1147,20 @@
           <label><input type="checkbox" id="plSelAll" /> 全选</label>
           <span class="hint" id="plSelHint"></span>
         </div>
-        <table class="song-table">
-          <thead><tr><th style="width:30px"></th><th>#</th><th>歌曲</th><th>歌手</th><th>专辑</th><th style="width:210px">操作</th></tr></thead>
-          <tbody id="plTbody"></tbody>
-        </table>
+        <div class="table-wrap">
+          <table class="song-table">
+            <thead><tr><th style="width:30px"></th><th>#</th><th>歌曲</th><th>歌手</th><th class="col-album">专辑</th><th style="width:210px">操作</th></tr></thead>
+            <tbody id="plTbody"></tbody>
+          </table>
+        </div>
       </div>
     </div>
 
     <!-- ============ 解析页 ============ -->
     <div class="tab-page hidden" id="page-parse">
       <div class="input-row">
-        <input id="urlInput" type="text" placeholder="粘贴歌曲链接 (https://y.qq.com/n/ryqq_v2/songDetail/002kR3lm1nTxkV) 或直接输入 songmid" />
+        <input id="urlInput" type="text" placeholder="粘贴歌曲链接或直接输入 songmid" />
         <button id="parseBtn">解析</button>
-        <span class="hint">支持 17 种音质</span>
       </div>
 
       <div class="section hidden" id="songSection">
@@ -908,7 +1199,8 @@
    </div>
 
    <!-- 右侧播放器区 (跨页签常驻) -->
-   <div class="player-col">
+   <div class="player-col" id="miniPlayer">
+     <button id="miniPlayerToggle" type="button">播放器 <span class="mini-chev">▴</span></button>
      <div class="section player-panel">
        <div class="panel-block" id="blockPlaying">
          <h2 class="panel-toggle">正在播放<span class="chev">▾</span></h2>
@@ -977,6 +1269,25 @@
   <script src="/vendor/APlayer.min.js"></script>
   <script>
     const $ = (id) => document.getElementById(id);
+
+    // 行操作图标 (下载图标来自用户提供的 iconfont SVG, 已净化: 去属性注释, fill 改 currentColor 适配主题)
+    const ICONS = {
+      dl: '<svg viewBox="0 0 1024 1024" width="16" height="16"><path d="M179.2 716.8v-204.8a25.6 25.6 0 0 1 51.2 0v204.8A76.8 76.8 0 0 0 307.2 793.6h409.6a76.8 76.8 0 0 0 76.8-76.8v-204.8a25.6 25.6 0 0 1 51.2 0v204.8a128 128 0 0 1-128 128H307.2A128 128 0 0 1 179.2 716.8z"/><path d="M486.4 665.6V204.8a25.6 25.6 0 0 1 51.2 0v460.8a25.6 25.6 0 0 1-51.2 0z"/><path d="M680.0896 490.9056a25.6 25.6 0 0 1 6.656 35.584l-71.8848 104.448c-26.2656 38.0928-63.0784 60.2624-102.8608 60.2624-39.7824 0-76.5952-22.1696-102.8608-60.3136l-71.8336-104.3968a25.6 25.6 0 0 1 42.1888-28.9792l71.8336 104.3968c18.944 27.4432 41.3184 38.0928 60.672 38.0928 19.4048 0 41.728-10.6496 60.672-38.0928l71.8336-104.448a25.6 25.6 0 0 1 35.584-6.5536z"/></svg>',
+      play: '<svg viewBox="0 0 1024 1024" width="16" height="16"><path d="M381.013333 182.613333L796.16 431.786667a93.013333 93.013333 0 0 1 0 160.426666L381.013333 841.386667A93.013333 93.013333 0 0 1 245.333333 759.893333V264.106667a93.013333 93.013333 0 0 1 135.68-81.493334z"/></svg>',
+      parse: '<svg viewBox="0 0 1024 1024" width="16" height="16"><path d="M469.333333 170.666667a298.666667 298.666667 0 1 0 0.042667 597.333333A298.666667 298.666667 0 0 0 469.333333 170.666667z m0 85.333333a213.333333 213.333333 0 1 1-0.042666 426.666667A213.333333 213.333333 0 0 1 469.333333 256z"/><path d="M650.069333 650.069333a42.666667 42.666667 0 0 1 60.330667 0l181.013333 181.013334a42.666667 42.666667 0 0 1-60.330666 60.330666l-181.013334-181.013333a42.666667 42.666667 0 0 1 0-60.330667z"/></svg>'
+    };
+
+    // 歌名超宽时启用来回滚动 (替代截断); 以滚动容器自身宽度判定
+    function markMarquees(scope) {
+      scope.querySelectorAll("td.t-name .t-scroll").forEach((el) => {
+        el.classList.remove("marquee");
+        el.style.removeProperty("--shift");
+        if (el.scrollWidth > el.clientWidth) {
+          el.style.setProperty("--shift", `${el.clientWidth - el.scrollWidth}px`);
+          el.classList.add("marquee");
+        }
+      });
+    }
 
     // ==================== 全局状态 ====================
     let DEFAULT_Q = "M500";
@@ -1175,7 +1486,17 @@
       $("queueRunBtn").textContent = queuePaused ? "继续" : "暂停";
     }
 
-    $("queueToggleBtn").addEventListener("click", () => {
+    // 右下角两个抽屉互斥, 同一时间只开一个
+    function closeSideDrawers(except) {
+      for (const id of ["queueDrawer", "dlSettingsDrawer"]) {
+        if (id !== except) $(id).classList.add("hidden");
+      }
+    }
+    $("queueToggleBtn").addEventListener("click", (e) => {
+      e.stopPropagation();
+      const opening = $("queueDrawer").classList.contains("hidden");
+      closeSideDrawers("queueDrawer");
+      if (opening && mobileMq.matches) document.body.classList.remove("m-player-open");
       $("queueDrawer").classList.toggle("hidden");
       renderQueue();
     });
@@ -1221,6 +1542,8 @@
     }
 
     function openDlSettings() {
+      closeSideDrawers("dlSettingsDrawer");
+      if (mobileMq.matches) document.body.classList.remove("m-player-open");
       $("aria2Url").value = aria2Cfg.url || "";
       $("aria2Secret").value = aria2Cfg.secret || "";
       $("aria2Msg").textContent = "";
@@ -1316,12 +1639,26 @@
       $("npSinger").textContent = artist || "";
     }
 
-    const playHistory = [];
+    // 播放历史: 浏览器持久化, 保留一周, 最多 100 条
+    const HISTORY_TTL = 7 * 24 * 60 * 60 * 1000;
+    const playHistory = loadHistory();
+    function loadHistory() {
+      try {
+        const now = Date.now();
+        const list = JSON.parse(localStorage.getItem("qm_play_history") || "[]");
+        return Array.isArray(list) ? list.filter((item) => now - Number(item.ts || 0) < HISTORY_TTL).slice(0, 100) : [];
+      } catch { return []; }
+    }
+    function saveHistory() {
+      try { localStorage.setItem("qm_play_history", JSON.stringify(playHistory)); } catch { /* 忽略存储失败 */ }
+    }
     function pushHistory(mid, name, artist, cover) {
       if (!mid) return;
-      if (playHistory[0]?.mid === mid) return; // 连续重复播放不重复记录
-      playHistory.unshift({ mid, name: name || mid, artist: artist || "", cover: cover || "" });
-      if (playHistory.length > 12) playHistory.pop();
+      const existing = playHistory.findIndex((item) => item.mid === mid);
+      if (existing >= 0) playHistory.splice(existing, 1);
+      playHistory.unshift({ mid, name: name || mid, artist: artist || "", cover: cover || "", ts: Date.now() });
+      if (playHistory.length > 100) playHistory.pop();
+      saveHistory();
       renderHistory();
     }
     function renderHistory() {
@@ -1680,14 +2017,14 @@
           tr.innerHTML = `
             <td><input type="checkbox" class="row-sel" data-i="${i}" /></td>
             <td class="t-idx">${i + 1}</td>
-            <td class="t-name">${escapeHtml(it.name || "")}${vip ? '<span class="badge-vip">VIP</span>' : ""}</td>
+            <td class="t-name"><span class="t-scroll">${escapeHtml(it.name || "")}</span>${vip ? '<span class="badge-vip">VIP</span>' : ""}</td>
             <td class="t-sub">${escapeHtml((it.singer || []).map(s => s.name).join(" / ") || "-")}</td>
-            <td class="t-sub">${escapeHtml(it.album?.name || "-")}</td>
+            <td class="t-sub t-album">${escapeHtml(it.album?.name || "-")}</td>
             <td class="t-actions">
-            <button class="primary" data-act="dl">下载</button>
-            <button data-act="play">播放</button>
-            <button data-act="parse">解析</button>
-          </td>`;
+              <button class="primary icon-btn" data-act="dl" type="button" title="下载">${ICONS.dl}</button>
+              <button class="icon-btn" data-act="play" type="button" title="播放">${ICONS.play}</button>
+              <button class="icon-btn" data-act="parse" type="button" title="解析">${ICONS.parse}</button>
+            </td>`;
           const name = it.name || "";
           const singer = (it.singer || []).map(s => s.name).join(" / ");
           // 复选框点击不冒泡
@@ -1709,6 +2046,7 @@
           tbody.appendChild(tr);
         });
         updateSelHint("searchSelHint", items);
+        markMarquees($("searchTbody"));
         $("searchPageInfo").textContent = `第 ${searchPage} 页`;
         $("searchPrevBtn").disabled = searchPage <= 1;
         $("searchNextBtn").disabled = items.length < 12;
@@ -1836,14 +2174,14 @@
           tr.innerHTML = `
             <td><input type="checkbox" class="row-sel" data-i="${i}" /></td>
             <td class="t-idx">${i + 1}</td>
-            <td class="t-name">${escapeHtml(t.name)}${vip ? '<span class="badge-vip">VIP</span>' : ""}</td>
+            <td class="t-name"><span class="t-scroll">${escapeHtml(t.name)}</span>${vip ? '<span class="badge-vip">VIP</span>' : ""}</td>
             <td class="t-sub">${escapeHtml(t.singer || "-")}</td>
-            <td class="t-sub">${escapeHtml(t.albumName || "-")}</td>
+            <td class="t-sub t-album">${escapeHtml(t.albumName || "-")}</td>
             <td class="t-actions">
-            <button class="primary" data-act="dl">下载</button>
-            <button data-act="play">播放</button>
-            <button data-act="parse">解析</button>
-          </td>`;
+              <button class="primary icon-btn" data-act="dl" type="button" title="下载">${ICONS.dl}</button>
+              <button class="icon-btn" data-act="play" type="button" title="播放">${ICONS.play}</button>
+              <button class="icon-btn" data-act="parse" type="button" title="解析">${ICONS.parse}</button>
+            </td>`;
           // 复选框点击不冒泡
           const cb = tr.querySelector(".row-sel");
           cb.addEventListener("click", (e) => e.stopPropagation());
@@ -1863,6 +2201,7 @@
           tbody.appendChild(tr);
         });
         updateSelHint("plSelHint", plTracks);
+        markMarquees($("plTbody"));
         $("plDetailSection").classList.remove("hidden");
       } catch (e) {
         showError("载入歌单失败: " + e.message);
@@ -2163,6 +2502,149 @@
 
     initConfig();
     checkStatus();
+    renderHistory();
+    initSite();
+
+    // ==================== 公告与联系方式 ====================
+    let siteConfig = null;
+    function renderMarkdown(text) {
+      const esc = String(text || "").replace(/[&<>"]/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" }[c]));
+      const withFont = esc.replace(/&lt;font color="(#[0-9a-fA-F]{3,8}|[a-z]+)"&gt;([\s\S]*?)&lt;\/font&gt;/g, '<font color="$1">$2</font>');
+      return withFont.split(/\n{2,}/).map((block) => {
+        const t = block.trim();
+        if (!t) return "";
+        if (/^```/.test(t)) return `<pre>${t.replace(/^```[a-z]*\n?/, "").replace(/```$/, "")}</pre>`;
+        if (/^#### /.test(t)) return `<h4>${t.slice(5)}</h4>`;
+        if (/^### /.test(t)) return `<h3>${t.slice(4)}</h3>`;
+        if (/^## /.test(t)) return `<h2>${t.slice(3)}</h2>`;
+        if (/^# /.test(t)) return `<h1>${t.slice(2)}</h1>`;
+        const withImgs = t.replace(/!\[(.*?)\]\((https?:\/\/[^\s)]+)\)/g, '<img src="$2" alt="$1" loading="lazy" referrerpolicy="no-referrer">');
+        const withLinks = withImgs.replace(/\[([^\]]+)\]\((https?:\/\/[^\s)]+)\)/g, '<a href="$2" target="_blank" rel="noopener noreferrer">$1</a>');
+        const inline = withLinks.replace(/`([^`]+)`/g, "<code>$1</code>").replace(/\*\*([^*]+)\*\*/g, "<strong>$1</strong>");
+        return `<p>${inline.replace(/\n/g, "<br>")}</p>`;
+      }).join("");
+    }
+    function openModal(cardHtml) {
+      const overlay = document.createElement("div");
+      overlay.className = "site-modal";
+      overlay.innerHTML = `<div class="modal-card">${cardHtml}</div>`;
+      overlay.addEventListener("click", (e) => { if (e.target === overlay) overlay.remove(); });
+      document.body.appendChild(overlay);
+      return overlay;
+    }
+    function openAnnouncement(force) {
+      const notice = siteConfig?.announcement;
+      if (!notice?.enabled || !notice.content?.trim()) return;
+      const overlay = openModal(`
+        <div class="modal-head"><strong>${escapeHtml(notice.title || "网站公告")}</strong><button class="q-mini" data-close>✕</button></div>
+        <div class="modal-body md">${renderMarkdown(notice.content)}</div>
+        <div class="modal-foot">
+          <button class="q-mini" data-day>本次关闭</button>
+          <button class="q-mini" data-forever>不再显示</button>
+          <span class="hint" data-wait></span>
+        </div>`);
+      const key = `qm-announcement-v2-${notice.version || 0}`;
+      const close = (value) => { if (value) localStorage.setItem(key, value); overlay.remove(); };
+      overlay.querySelector("[data-close]").addEventListener("click", () => close(null));
+      const dayBtn = overlay.querySelector("[data-day]");
+      const foreverBtn = overlay.querySelector("[data-forever]");
+      dayBtn.addEventListener("click", () => close(`day:${new Date().toISOString().slice(0, 10)}`));
+      foreverBtn.addEventListener("click", () => close("forever"));
+      // 主动打开(顶栏按钮)不启用强制阅读; 自动弹出时按配置倒计时
+      const seconds = force ? 0 : Number(notice.required_seconds || 0);
+      if (seconds > 0) {
+        dayBtn.disabled = foreverBtn.disabled = true;
+        const wait = overlay.querySelector("[data-wait]");
+        let left = seconds;
+        wait.textContent = `请阅读 ${left} 秒后再关闭`;
+        const timer = setInterval(() => {
+          left -= 1;
+          if (left <= 0) {
+            clearInterval(timer);
+            dayBtn.disabled = foreverBtn.disabled = false;
+            wait.textContent = "";
+          } else wait.textContent = `请阅读 ${left} 秒后再关闭`;
+        }, 1000);
+      }
+    }
+    function openContact() {
+      const contact = siteConfig?.contact;
+      if (!contact?.enabled) return;
+      const card = (item) => {
+        if (!item) return "";
+        const inner = `${item.image ? `<img src="${escapeHtml(item.image)}" alt="" loading="lazy" referrerpolicy="no-referrer">` : ""}<div class="cc-label">${escapeHtml(item.label || "")}</div>`;
+        return item.url
+          ? `<a class="contact-card" href="${escapeHtml(item.url)}" target="_blank" rel="noopener noreferrer">${inner}</a>`
+          : `<div class="contact-card">${inner}</div>`;
+      };
+      const overlay = openModal(`
+        <div class="modal-head"><strong>${escapeHtml(contact.label || "联系")}</strong><button class="q-mini" data-close>✕</button></div>
+        <div class="contact-cards">${card(contact.personal)}${card(contact.group)}</div>`);
+      overlay.querySelector("[data-close]").addEventListener("click", () => overlay.remove());
+    }
+    async function initSite() {
+      try { siteConfig = await api("/site"); } catch { return; }
+      const notice = siteConfig.announcement || {};
+      const contact = siteConfig.contact || {};
+      $("announcementBtn").classList.toggle("hidden", !notice.enabled);
+      $("contactBtn").classList.toggle("hidden", !contact.enabled);
+      if (notice.enabled) {
+        const key = `qm-announcement-v2-${notice.version || 0}`;
+        const seen = localStorage.getItem(key);
+        const today = `day:${new Date().toISOString().slice(0, 10)}`;
+        if (seen !== "forever" && seen !== today) openAnnouncement(false);
+      }
+    }
+    $("announcementBtn").addEventListener("click", () => openAnnouncement(true));
+    $("contactBtn").addEventListener("click", openContact);
+
+    // ==================== 手机端布局 (PC 端不受影响) ====================
+    const mobileMq = window.matchMedia("(max-width: 760px)");
+    const headerEl = document.querySelector("header");
+    const tabsEl = document.querySelector(".tabs");
+    const menuWrap = $("mobileMenu");
+    const layoutEl = document.querySelector(".layout");
+    const hActionsEl = headerEl.querySelector(".h-actions");
+    const hOrder = [...hActionsEl.children]; // 顶栏按钮原顺序, 还原时用
+    let navMoved = false;
+    function syncMobileNav() {
+      if (mobileMq.matches && !navMoved) {
+        // 顶栏(队列/下载设置/联系/登录)移入抽屉; 主题/公告/音质提到第一层; 页签第二层
+        menuWrap.append(headerEl);
+        $("mActions").append($("themeToggle"), $("announcementBtn"), $("qualityWrap"));
+        $("mTabRow").append(tabsEl);
+        navMoved = true;
+      } else if (!mobileMq.matches && navMoved) {
+        layoutEl.before(headerEl, tabsEl);
+        hOrder.forEach((el) => hActionsEl.append(el)); // 按原顺序还原顶栏按钮
+        navMoved = false;
+        document.body.classList.remove("m-nav-open", "m-player-open");
+      }
+    }
+    if (mobileMq.addEventListener) mobileMq.addEventListener("change", syncMobileNav);
+    syncMobileNav();
+    $("mobileMenuBtn").addEventListener("click", (e) => {
+      e.stopPropagation();
+      document.body.classList.toggle("m-nav-open");
+    });
+    $("miniPlayerToggle").addEventListener("click", (e) => {
+      e.stopPropagation();
+      document.body.classList.toggle("m-player-open");
+      // 展开迷你播放器时收起右下角抽屉, 避免重叠
+      if (document.body.classList.contains("m-player-open")) closeSideDrawers(null);
+    });
+    document.addEventListener("click", (e) => {
+      // 点击菜单/迷你播放器以外区域自动收起
+      if (document.body.classList.contains("m-nav-open")
+        && !menuWrap.contains(e.target) && !$("mobileMenuBtn").contains(e.target)) {
+        document.body.classList.remove("m-nav-open");
+      }
+      if (mobileMq.matches
+        && document.body.classList.contains("m-player-open")
+        && !$("miniPlayer").contains(e.target)) {
+        document.body.classList.remove("m-player-open");
+      }
+    });
 
     // 从 URL hash 恢复页面状态 (刷新/回退后保持页签、搜索词、当前歌单)
     (async function restoreState() {

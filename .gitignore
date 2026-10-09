@@ -4,5 +4,8 @@ dist/
 .DS_Store
 .env
 device.json
+credential.json
+config.json
+.mimosa/
 
 src/public/vendor/.mimosa/

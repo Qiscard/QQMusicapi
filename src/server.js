@@ -110,7 +110,7 @@ class ConfigStore {
   }
 
   _load() {
-    let data = { defaultQuality: DEFAULT_QUALITY };
+    let data = { defaultQuality: DEFAULT_QUALITY, ...SITE_DEFAULTS };
     try {
       if (existsSync(this._path)) {
         const raw = JSON.parse(readFileSync(this._path, "utf-8"));
@@ -811,7 +811,150 @@ function configRouter(client, configStore) {
     ctx.body = ok(configStore.toPublicJSON());
   });
 
+  // 公告/联系方式: 公开读取 + 管理员读写 (参考 openlist-image-api 的公告方案)
+  router.get("/site", (ctx) => {
+    ctx.set("Cache-Control", "no-store");
+    ctx.body = ok(publicSite(configStore._data));
+  });
+
+  router.get("/site/admin", (ctx) => {
+    requireAdmin(ctx);
+    ctx.set("Cache-Control", "no-store");
+    ctx.body = ok(adminSite(configStore._data));
+  });
+
+  router.put("/site", async (ctx) => {
+    requireAdmin(ctx);
+    let next;
+    try {
+      next = applySitePatch(configStore._data, ctx.request.body ?? {});
+    } catch (e) {
+      ctx.throw(400, e.message);
+    }
+    await configStore.update(next);
+    ctx.body = ok(adminSite(configStore._data));
+  });
+
   return router;
+}
+
+// ==================== 公告/联系方式配置 ====================
+// 字段规则与 openlist-image-api 的 announcement-contact 方案保持一致.
+
+const SITE_DEFAULTS = {
+  announcement_enabled: false,
+  announcement_title: "网站公告",
+  announcement_content: "",
+  announcement_required_seconds: 0,
+  announcement_version: 0,
+  contact_enabled: false,
+  contact_label: "联系",
+  contact_personal_label: "个人",
+  contact_personal_url: "",
+  contact_personal_image: "",
+  contact_group_label: "群组",
+  contact_group_url: "",
+  contact_group_image: "",
+};
+
+function clipText(value, max) {
+  return String(value ?? "").slice(0, max);
+}
+
+function siteUrl(value, label, max) {
+  const text = clipText(value, max).trim();
+  if (!text) return "";
+  let parsed;
+  try {
+    parsed = new URL(text);
+  } catch {
+    throw new Error(`${label} 必须是带域名的 http/https 地址`);
+  }
+  if (parsed.protocol !== "http:" && parsed.protocol !== "https:") {
+    throw new Error(`${label} 只接受 http 或 https`);
+  }
+  if (!parsed.hostname) throw new Error(`${label} 缺少域名`);
+  return text;
+}
+
+function applySitePatch(current, body) {
+  const next = { ...SITE_DEFAULTS, ...current };
+  const versionKeys = [
+    "announcement_enabled",
+    "announcement_title",
+    "announcement_content",
+    "announcement_required_seconds",
+  ];
+  const before = versionKeys.map((key) => JSON.stringify(next[key])).join("|");
+  if ("announcement_enabled" in body) {
+    if (typeof body.announcement_enabled !== "boolean") throw new Error("announcement_enabled 必须为布尔值");
+    next.announcement_enabled = body.announcement_enabled;
+  }
+  if ("announcement_title" in body) next.announcement_title = clipText(body.announcement_title, 120);
+  if ("announcement_content" in body) next.announcement_content = clipText(body.announcement_content, 4000);
+  if ("announcement_required_seconds" in body) {
+    const seconds = Number(body.announcement_required_seconds);
+    if (!Number.isInteger(seconds) || seconds < 0 || seconds > 3600) {
+      throw new Error("announcement_required_seconds 必须是 0 到 3600 的整数");
+    }
+    next.announcement_required_seconds = seconds;
+  }
+  const after = versionKeys.map((key) => JSON.stringify(next[key])).join("|");
+  if (before !== after) next.announcement_version = Number(next.announcement_version || 0) + 1;
+
+  if ("contact_enabled" in body) {
+    if (typeof body.contact_enabled !== "boolean") throw new Error("contact_enabled 必须为布尔值");
+    next.contact_enabled = body.contact_enabled;
+  }
+  const labels = [
+    ["contact_label", 20, "联系"],
+    ["contact_personal_label", 20, "个人"],
+    ["contact_group_label", 20, "群组"],
+  ];
+  for (const [key, max, fallback] of labels) {
+    if (key in body) next[key] = clipText(body[key], max).trim() || fallback;
+  }
+  if ("contact_personal_url" in body) next.contact_personal_url = siteUrl(body.contact_personal_url, "个人联系链接", 300);
+  if ("contact_personal_image" in body) next.contact_personal_image = siteUrl(body.contact_personal_image, "个人联系图片", 300);
+  if ("contact_group_url" in body) next.contact_group_url = siteUrl(body.contact_group_url, "群组联系链接", 300);
+  if ("contact_group_image" in body) next.contact_group_image = siteUrl(body.contact_group_image, "群组联系图片", 300);
+  const hasContact = ["contact_personal_url", "contact_personal_image", "contact_group_url", "contact_group_image"]
+    .some((key) => next[key]);
+  if (next.contact_enabled && !hasContact) throw new Error("启用联系方式时至少填写一个链接或图片");
+  return next;
+}
+
+function contactCard(label, url, image) {
+  if (!url && !image) return null;
+  return { label, url, image };
+}
+
+function publicSite(data) {
+  const source = { ...SITE_DEFAULTS, ...data };
+  const announcementOn = source.announcement_enabled === true && source.announcement_content.trim() !== "";
+  const personal = contactCard(source.contact_personal_label, source.contact_personal_url, source.contact_personal_image);
+  const group = contactCard(source.contact_group_label, source.contact_group_url, source.contact_group_image);
+  const contactOn = source.contact_enabled === true && Boolean(personal || group);
+  return {
+    announcement: {
+      enabled: announcementOn,
+      title: announcementOn ? source.announcement_title || "网站公告" : "",
+      content: announcementOn ? source.announcement_content : "",
+      required_seconds: announcementOn ? source.announcement_required_seconds : 0,
+      version: Number(source.announcement_version || 0),
+    },
+    contact: {
+      enabled: contactOn,
+      label: source.contact_label || "联系",
+      personal: contactOn ? personal : null,
+      group: contactOn ? group : null,
+    },
+  };
+}
+
+function adminSite(data) {
+  const source = { ...SITE_DEFAULTS, ...data };
+  return Object.fromEntries(Object.keys(SITE_DEFAULTS).map((key) => [key, source[key]]));
 }
 
 // ==================== 应用装配 ====================

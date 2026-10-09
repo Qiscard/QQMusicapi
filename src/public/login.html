@@ -324,6 +324,28 @@
 
     .hidden { display: none !important; }
 
+    /* 公告/联系方式表单: 两列 grid, 输入框等宽 */
+    .site-form {
+      display: grid;
+      grid-template-columns: 1fr 1fr;
+      gap: 12px 16px;
+    }
+    .site-form .form-row {
+      display: flex;
+      flex-direction: column;
+      gap: 5px;
+      margin: 0;
+      align-items: stretch;
+    }
+    .site-form .form-row label { min-width: 0; }
+    .site-form .form-row input,
+    .site-form .form-row textarea { width: 100%; box-sizing: border-box; min-width: 0; }
+    .site-form .form-check { flex-direction: row; align-items: center; gap: 8px; }
+    .site-form .form-check label { cursor: pointer; }
+    .site-form .form-check input { width: 16px; height: 16px; accent-color: #4ea1ff; cursor: pointer; }
+    .site-form .span-2 { grid-column: 1 / -1; }
+    @media (max-width: 640px) { .site-form { grid-template-columns: 1fr; } }
+
     /* 管理员密钥门 */
     .key-gate {
       position: fixed;
@@ -418,6 +440,26 @@
         <button id="logoutBtn" class="danger">退出登录</button>
       </div>
       <div class="msg" id="statusMsg"></div>
+    </div>
+
+    <div class="section">
+      <h2>公告与联系方式</h2>
+      <div class="site-form">
+        <div class="form-row form-check"><label>启用公告弹窗</label><input id="announcementEnabled" type="checkbox"></div>
+        <div class="form-row form-check"><label>启用联系按钮</label><input id="contactEnabled" type="checkbox"></div>
+        <div class="form-row"><label>公告标题 (最长 120 字)</label><input id="announcementTitle" maxlength="120"></div>
+        <div class="form-row"><label>强制阅读秒数 (0-3600)</label><input id="announcementSeconds" type="number" min="0" max="3600" value="0"></div>
+        <div class="form-row span-2"><label>公告内容 (支持受限 Markdown, 最长 4000 字)</label><textarea id="announcementContent" maxlength="4000" style="min-height:120px;background:#1a1e26;border:1px solid #2a313c;border-radius:6px;color:#e6e6e6;padding:10px;font-size:13px;"></textarea></div>
+        <div class="form-row"><label>联系按钮文字</label><input id="contactLabel" maxlength="20" value="联系"></div>
+        <div class="form-row"><label>个人联系文字</label><input id="contactPersonalLabel" maxlength="20" value="个人"></div>
+        <div class="form-row"><label>个人联系链接</label><input id="contactPersonalUrl" maxlength="300" placeholder="https://"></div>
+        <div class="form-row"><label>个人联系图片</label><input id="contactPersonalImage" maxlength="300" placeholder="https://...png (二维码)"></div>
+        <div class="form-row"><label>群组联系文字</label><input id="contactGroupLabel" maxlength="20" value="群组"></div>
+        <div class="form-row"><label>群组联系链接</label><input id="contactGroupUrl" maxlength="300" placeholder="https://"></div>
+        <div class="form-row"><label>群组联系图片</label><input id="contactGroupImage" maxlength="300" placeholder="https://...png (二维码)"></div>
+      </div>
+      <div class="actions"><button id="saveSiteBtn">保存公告配置</button></div>
+      <div class="msg" id="siteMsg"></div>
     </div>
 
     <!-- 当前用户信息 -->
@@ -982,11 +1024,39 @@
       showGate();
     });
 
+    // ==================== 公告/联系方式配置 ====================
+    const SITE_FIELDS = ["announcement_enabled", "announcement_title", "announcement_content", "announcement_required_seconds", "contact_enabled", "contact_label", "contact_personal_label", "contact_personal_url", "contact_personal_image", "contact_group_label", "contact_group_url", "contact_group_image"];
+    const SITE_INPUTS = ["announcementEnabled", "announcementTitle", "announcementContent", "announcementSeconds", "contactEnabled", "contactLabel", "contactPersonalLabel", "contactPersonalUrl", "contactPersonalImage", "contactGroupLabel", "contactGroupUrl", "contactGroupImage"];
+    async function loadSite() {
+      const data = await api("/site/admin");
+      SITE_FIELDS.forEach((key, index) => {
+        const input = $(SITE_INPUTS[index]);
+        if (!input) return;
+        if (input.type === "checkbox") input.checked = Boolean(data[key]);
+        else input.value = data[key] ?? "";
+      });
+    }
+    $("saveSiteBtn").addEventListener("click", async () => {
+      const body = {};
+      SITE_FIELDS.forEach((key, index) => {
+        const input = $(SITE_INPUTS[index]);
+        if (!input) return;
+        body[key] = input.type === "checkbox" ? input.checked : input.type === "number" ? Number(input.value || 0) : input.value;
+      });
+      try {
+        await api("/site", { method: "PUT", headers: { "Content-Type": "application/json" }, body: JSON.stringify(body) });
+        showMsg($("siteMsg"), "ok", "公告配置已保存 (公告内容变化会自动提升版本号)");
+      } catch (e) {
+        showMsg($("siteMsg"), "err", e.message);
+      }
+    });
+
     // 启动: 已存密钥则静默校验, 通过直接进入, 否则停在密钥门
     (async function gateInit() {
       const stored = getAdminKey();
       if (stored && await verifyKey(stored)) {
         enterAdmin();
+        loadSite().catch((e) => showMsg($("siteMsg"), "err", e.message));
       } else {
         if (stored) setAdminKey(""); // 失效密钥清除
         showGate();
