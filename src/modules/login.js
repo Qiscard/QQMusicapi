@@ -59,10 +59,9 @@ function mapEvent(code) {
 
 export class LoginApi extends ApiModule {
   /** 校验并返回 data 字段或抛错
-   *  入参可能两种形态:
-   *  1. 已解包形态(由 Client.execute 返回): { openid, refresh_token, ... }
-   *  2. 原始 CGI 响应: { code, data: {...} }
-   *  两种都要正确处理.
+   *  入参两种形态:
+   *  1. 完整 CGI envelope (由 Client.execute 在 allowErrorCodes 场景返回): { code, data: {...} }
+   *  2. 无 allowErrorCodes 时 execute 直接抛错, 不会走到这里
    */
   _validateResult(resp) {
     const r = resp ?? {};

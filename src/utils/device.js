@@ -28,14 +28,15 @@ export function randomImei() {
 
 /** 生成默认 Android 设备指纹 */
 export function makeDefaultDevice() {
-  const rand = (n) => Math.floor(Math.random() * n).toString();
+  const randDigits = (min, max) =>
+    String(min + Math.floor(Math.random() * (max - min)));
   return {
-    display: `QMAPI.${rand(999999 - 100000) + 100000}.001`,
+    display: `QMAPI.${randDigits(100000, 1000000)}.001`,
     product: "iarim",
     device: "sagit",
     board: "eomam",
     model: "MI 6",
-    fingerprint: `xiaomi/iarim/sagit:10/eomam.200122.001/${rand(9999999 - 1000000) + 1000000}:user/release-keys`,
+    fingerprint: `xiaomi/iarim/sagit:10/eomam.200122.001/${randDigits(1000000, 10000000)}:user/release-keys`,
     bootId: randomUUID(),
     procVersion: `Linux 5.4.0-54-generic-${randomHex(4)} (android-build@google.com)`,
     imei: randomImei(),
@@ -82,7 +83,8 @@ export class DeviceManager {
         this._device = raw;
       } else {
         this._device = makeDefaultDevice();
-        this.save();
+        // 持久化失败必须可见 (否则静默换新设备身份, 且产生未处理 rejection)
+        await this.save();
       }
     } catch {
       this._device = makeDefaultDevice();

@@ -143,13 +143,15 @@ export class SongApi extends ApiModule {
    * 将入参中的 song_id 转换为 mid.
    * - 纯数字 -> 调用 getDetail 获取对应 mid
    * - 其他   -> 原样返回
-   * 返回 { midList, idToMidMap }
-   *   - midList: 全部转换为 mid 后的列表 (与入参同序)
+   * 返回 { midList, idToMidMap, failedIds }
+   *   - midList: 全部转换为 mid 后的列表 (与入参同序; 转换失败处为空串)
    *   - idToMidMap: song_id -> mid 的映射 (用于回填结果 key)
+   *   - failedIds: 转换失败的 song_id 集合
    */
   async _resolveToMids(mids) {
     const midList = [];
     const idToMidMap = {};
+    const failedIds = new Set();
     const needLookup = []; // 需要查 getDetail 的索引
     for (let i = 0; i < mids.length; i++) {
       const m = mids[i];
@@ -160,18 +162,22 @@ export class SongApi extends ApiModule {
       }
     }
     if (needLookup.length > 0) {
-      // 用 song_id 批量查详情, 拿到 mid
+      // 用 song_id 批量查详情, 拿到 mid.
+      // getDetail 批量路径会丢弃失败项, 不能按过滤后数组位置对齐 —— 按 songid 回填.
       const detail = await this.getDetail(needLookup.map((it) => it.id));
-      const tracks = detail?.tracks ?? [];
-      for (let j = 0; j < needLookup.length; j++) {
-        const { index, id } = needLookup[j];
-        const track = tracks[j];
-        const mid = track?.mid ?? "";
+      const idToTrack = new Map();
+      for (const track of detail?.tracks ?? []) {
+        const id = String(track?.id ?? "");
+        if (id && track?.mid) idToTrack.set(id, track.mid);
+      }
+      for (const { index, id } of needLookup) {
+        const mid = idToTrack.get(id) ?? "";
         midList[index] = mid;
         if (mid) idToMidMap[id] = mid;
+        else failedIds.add(id);
       }
     }
-    return { midList, idToMidMap };
+    return { midList, idToMidMap, failedIds };
   }
 
   /**
@@ -189,17 +195,26 @@ export class SongApi extends ApiModule {
     const ext = this._inferExt(type);
 
     // 1. 将 song_id 转换为 mid
-    const { midList, idToMidMap } = await this._resolveToMids(mids);
-    // mid -> 原始入参 (用于回填返回结果的 key)
-    const midToOriginal = {};
+    const { midList, idToMidMap, failedIds } = await this._resolveToMids(mids);
+    // mid -> 原始入参列表 (同一 mid 可能以多种形式传入, 如 song_id + mid)
+    const midToOriginals = new Map();
     for (let i = 0; i < mids.length; i++) {
       const orig = String(mids[i]);
       const mid = midList[i];
-      if (mid) midToOriginal[mid] = orig;
+      if (!mid) continue;
+      if (!midToOriginals.has(mid)) midToOriginals.set(mid, []);
+      midToOriginals.get(mid).push(orig);
     }
     // 过滤掉转换失败的项
-    const validMids = midList.filter(Boolean);
-    if (validMids.length === 0) return {};
+    const validMids = [...new Set(midList.filter(Boolean))];
+    if (validMids.length === 0) {
+      // 全部转换失败也要给每个 song_id 明确错误, 而不是空结果
+      const map = {};
+      for (const id of failedIds) {
+        map[id] = { url: "", vkey: "", size: 0, error: "song_id 查询详情失败, 无法获取 mid" };
+      }
+      return map;
+    }
 
     const map = {};
     let pending = [...validMids];
@@ -212,49 +227,60 @@ export class SongApi extends ApiModule {
       const sipList = goodSips.length > 0 ? goodSips : sips;
       const sip = sipList.length > 0 ? sipList : null;
       const failed = [];
+      // 本轮响应中已出现 (无论成败) 的 mid; 未出现的视为 pending 继续重试
+      const seen = new Set();
       for (const item of data?.midurlinfo ?? []) {
         const mid = item.songmid;
         if (!mid) continue;
-        const origKey = midToOriginal[mid] ?? mid;
-        if (!item.purl) {
-          // 已成功的条目不允许被后续尝试覆盖
-          if (!map[origKey]?.url) {
-            map[origKey] = {
-              url: "",
-              vkey: item.vkey,
-              size: 0,
-              error:
-                item.result === 104003
-                  ? "无权限 (需要 VIP 或更高会员等级)"
-                  : item.result === 104004
-                    ? "VKey 获取失败"
-                    : "无可用直链",
-            };
+        seen.add(mid);
+        const origKeys = midToOriginals.get(mid) ?? [mid];
+        for (const origKey of origKeys) {
+          if (!item.purl) {
+            // 已成功的条目不允许被后续尝试覆盖
+            if (!map[origKey]?.url) {
+              map[origKey] = {
+                url: "",
+                vkey: item.vkey,
+                size: 0,
+                error:
+                  item.result === 104003
+                    ? "无权限 (需要 VIP 或更高会员等级)"
+                    : item.result === 104004
+                      ? "VKey 获取失败"
+                      : "无可用直链",
+              };
+            }
+            continue;
           }
-          failed.push(mid);
-          continue;
+          let url;
+          if (/^https?:\/\//i.test(item.purl)) {
+            url = item.purl;
+          } else if (sip) {
+            url = sip[Math.floor(Math.random() * sip.length)] + item.purl;
+          } else {
+            url = SongApi.SONG_URL_FALLBACK_DOMAIN + item.purl;
+          }
+          map[origKey] = { url, vkey: item.vkey, size: 0, error: undefined };
         }
-        let url;
-        if (/^https?:\/\//i.test(item.purl)) {
-          url = item.purl;
-        } else if (sip) {
-          url = sip[Math.floor(Math.random() * sip.length)] + item.purl;
-        } else {
-          url = SongApi.SONG_URL_FALLBACK_DOMAIN + item.purl;
-        }
-        map[origKey] = { url, vkey: item.vkey, size: 0, error: undefined };
+        if (!item.purl) failed.push(mid);
+      }
+      // 上游漏返回的请求条目也需要重试, 不能只看显式失败的
+      for (const mid of pending) {
+        if (!seen.has(mid)) failed.push(mid);
       }
       return failed;
     };
 
     // 2. 主路径: UrlGetVkey (Android 平台, 含 QIMEI/会话)
     const device = await this._client.getDevice();
+    let lastError = null;
     try {
       const data = await this._client.execute(
         this.getUrls(validMids, type, { guid: device.openUdid }),
       );
       pending = fillFromData(data);
-    } catch {
+    } catch (e) {
+      lastError = e;
       // 主路径整体失败时继续尝试备用路径
     }
 
@@ -266,22 +292,33 @@ export class SongApi extends ApiModule {
           this._buildCgiVkeyRequest(pending, type, ext),
         );
         pending = fillFromData(data);
-      } catch {
-        break;
+        lastError = null;
+      } catch (e) {
+        // 记录原因但继续剩余重试 (瞬时故障不应提前放弃)
+        lastError = e;
+        if (attempt >= 1) break;
       }
       if (pending.length > 0) await new Promise((r) => setTimeout(r, 300));
     }
 
-    // 4. 对转换失败的 song_id (mid 为空) 补充错误信息
-    for (const m of mids) {
-      const orig = String(m);
-      if (map[orig]) continue;
+    // 4. 收尾: 仍无结果的条目补充可区分的错误 (含上游漏返回的情况)
+    for (const orig of mids.map((m) => String(m))) {
+      if (map[orig]?.url || map[orig]?.error) continue;
       if (SongApi._isSongId(orig) && !idToMidMap[orig]) {
         map[orig] = {
           url: "",
           vkey: "",
           size: 0,
           error: "song_id 查询详情失败, 无法获取 mid",
+        };
+      } else if (!map[orig]?.error) {
+        map[orig] = {
+          url: "",
+          vkey: "",
+          size: 0,
+          error: lastError
+            ? `取链失败: ${lastError.message}`
+            : "上游未返回该歌曲的直链信息",
         };
       }
     }

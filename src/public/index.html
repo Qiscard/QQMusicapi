@@ -1525,9 +1525,11 @@
       return String(s ?? "").replace(/[\\/:*?"<>|\r\n\0]/g, "_").trim();
     }
 
-    async function aria2Call(method, params) {
-      const p = aria2Cfg.secret ? [`token:${aria2Cfg.secret}`, ...params] : params;
-      const r = await fetch(aria2Cfg.url, {
+    async function aria2Call(method, params, cfgOverride) {
+      // cfgOverride: 测试连接时传入临时配置, 不改写全局下载目标
+      const cfg = cfgOverride || aria2Cfg;
+      const p = cfg.secret ? [`token:${cfg.secret}`, ...params] : params;
+      const r = await fetch(cfg.url, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ jsonrpc: "2.0", id: Date.now(), method, params: p }),
@@ -1538,7 +1540,8 @@
     }
 
     async function sendToAria2(cdnUrl, filename) {
-      await aria2Call("aria2.addUri", [[cdnUrl], { out: filename, "user-agent": "QQMusic" }]);
+      // 使用配置快照, 队列运行中修改设置不影响已提交任务的目标地址
+      await aria2Call("aria2.addUri", [[cdnUrl], { out: filename, "user-agent": "QQMusic" }], { ...aria2Cfg });
     }
 
     function openDlSettings() {
@@ -1562,15 +1565,13 @@
       $("aria2Msg").textContent = url ? "已保存: 新下载将走 aria2 直链" : "已保存: 新下载将走浏览器代理";
     });
     $("aria2TestBtn").addEventListener("click", async () => {
-      const bak = { ...aria2Cfg };
-      aria2Cfg = { url: $("aria2Url").value.trim(), secret: $("aria2Secret").value };
+      // 测试使用表单当前值的副本, 不改写全局 aria2Cfg (真实下载目标不受影响)
+      const testCfg = { url: $("aria2Url").value.trim(), secret: $("aria2Secret").value };
       try {
-        const v = await aria2Call("aria2.getVersion", []);
+        const v = await aria2Call("aria2.getVersion", [], testCfg);
         $("aria2Msg").textContent = `连接成功: aria2 v${v.version}`;
       } catch (e) {
         $("aria2Msg").textContent = `连接失败: ${e.message} (检查地址/密钥/--rpc-allow-origin-all)`;
-      } finally {
-        aria2Cfg = bak;
       }
     });
 
@@ -1599,8 +1600,11 @@
       const url = `/song/download?mid=${encodeURIComponent(mid)}&type=${encodeURIComponent(q)}` +
         (name ? `&name=${encodeURIComponent(name)}` : "") +
         (singer ? `&singer=${encodeURIComponent(singer)}` : "");
+      const ctrl = new AbortController();
+      // 挂起下载会永久占住队列; 10 分钟超时后中止并释放
+      const timer = setTimeout(() => ctrl.abort(), 10 * 60 * 1000);
       try {
-        const res = await fetch(url);
+        const res = await fetch(url, { signal: ctrl.signal });
         if (!res.ok) {
           let msg = `HTTP ${res.status}`;
           try { const j = await res.json(); msg = j.message || msg; } catch { /* 保留 HTTP 状态 */ }
@@ -1617,8 +1621,10 @@
         setTimeout(() => URL.revokeObjectURL(objUrl), 60000);
         return true;
       } catch (e) {
-        toast(`下载失败: ${e.message}`, 4000);
+        toast(`下载失败: ${e.name === "AbortError" ? "超时中止 (10 分钟)" : e.message}`, 4000);
         return false;
+      } finally {
+        clearTimeout(timer);
       }
     }
 
@@ -1858,10 +1864,13 @@
 
     function seekTo(t) {
       if (ap && ap.audio) {
-        ap.seek(t);
-        if (ap.audio.paused) ap.play().catch(() => {});
+        // 高亮判断使用 line.time + lyricOffset, seek 目标保持同一时间轴
+        ap.seek(Math.max(0, t + lyricOffset));
+        if (ap.audio.paused) {
+          try { ap.play(); } catch (err) { /* APlayer.play() 可能不返回 Promise */ }
+        }
       } else if (nativeAudio) {
-        nativeAudio.currentTime = t;
+        nativeAudio.currentTime = Math.max(0, t + lyricOffset);
         nativeAudio.play().catch(() => {});
       }
       currentLyricLine = -2; // 强制下一次 sync 刷新高亮
@@ -1878,7 +1887,11 @@
       seekTo(parseFloat(line.getAttribute("data-time")));
     });
     // 手动滚动歌词时暂停自动跟随, 5 秒无操作后回位到当前行
-    $("lyricsBox").addEventListener("wheel", () => {
+    // 手动滚动歌词时暂停自动跟随, 5 秒无操作后回位到当前行
+    // 触摸设备拖动只产生 touch 事件, 补 touchstart 才能启用手动锁定
+    $("lyricsBox").addEventListener("wheel", markUserScroll, { passive: true });
+    $("lyricsBox").addEventListener("touchstart", markUserScroll, { passive: true });
+    function markUserScroll() {
       cancelLyricScrollAnim(); // 用户接管滚动, 立即停掉进行中的自动滚动动画
       userScrolledLyrics = true;
       clearTimeout(lyricsScrollTimeout);
@@ -1887,7 +1900,7 @@
         const cur = $("lyricsContent").querySelector(".current");
         if (cur) scrollToCurrentLyric(cur);
       }, 5000);
-    }, { passive: true });
+    }
 
     // 播放器面板手风琴: 打开一个自动折叠另一个
     document.querySelectorAll(".player-panel .panel-toggle").forEach(h => {
@@ -1905,13 +1918,18 @@
       });
     });
 
+    let playSeq = 0; // 播放请求代次: 防止较早的取链响应覆盖最新选曲
+
     async function playMid(mid, name, singer) {
+      // 请求代次: 防止较早的取链响应覆盖最新选曲
+      const seq = ++playSeq;
       toast("获取播放链接…", 1200);
       // 先用默认音质, 失败自动降级到 M500 (几乎所有歌曲可用)
       const tryTypes = [...new Set([DEFAULT_Q, "M500"])];
       for (const t of tryTypes) {
         try {
           const map = await api(`/song/urls?mids=${encodeURIComponent(mid)}&type=${t}`);
+          if (seq !== playSeq) return; // 已有更新的选曲
           const info = map?.[mid];
           if (!info?.url) continue;
           const label = (QUALITIES.find(q => q.code === t) || {}).label || t;
@@ -1924,7 +1942,10 @@
           }];
           if (ap) {
             ap.list.clear();
-            ap.list.add(audio, true);
+            ap.list.add(audio);
+            // APlayer 1.10.1 的 list.add 无 autoplay 参数且 clear 后处于暂停态,
+            // 必须显式调用 play() 才会开始播放
+            try { ap.play(); } catch (err) { console.warn("APlayer play failed:", err); }
           } else {
             nativePlay(audio[0]);
           }
@@ -1982,20 +2003,25 @@
 
     let lastSearchItems = [];
     let searchPage = 1;
+    let searchSeq = 0; // 搜索请求代次: 防止旧响应覆盖新结果
     async function doSearch(page = 1) {
       const kw = $("searchInput").value.trim();
       if (!kw) return;
+      const pageNo = Math.max(1, Number(page) || 1); // 防御: 事件对象/undefined 不再产生 NaN
       $("acBox").classList.add("hidden");
       $("searchBtn").disabled = true;
       saveState({ tab: "search", kw });
-      searchPage = Math.max(1, page);
+      // 每次搜索带请求序号: 仅最新请求可提交结果, 防止旧响应覆盖新搜索
+      const seq = ++searchSeq;
+      searchPage = pageNo;
       try {
         // 服务端分页: 每页 12 条
         const d = await api("/search/byType", {
           method: "POST",
           headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ keyword: kw, type: 0, num: 12, page: searchPage }),
+          body: JSON.stringify({ keyword: kw, type: 0, num: 12, page: pageNo }),
         });
+        if (seq !== searchSeq) return; // 已被更新的搜索取代
         const items = d?.body?.item_song || [];
         lastSearchItems = items;
         $("searchSelAll").checked = false;
@@ -2054,7 +2080,7 @@
         $("searchResultWrap").classList.remove("hidden");
         $("searchDlNote").classList.remove("hidden");
       } catch (e) {
-        showError("搜索失败: " + e.message);
+        if (seq === searchSeq) showError("搜索失败: " + e.message);
       } finally {
         $("searchBtn").disabled = false;
       }
@@ -2082,7 +2108,7 @@
       if (!picked.length) { toast("请先勾选歌曲"); return; }
       addToQueue(picked);
     });
-    $("searchBtn").addEventListener("click", doSearch);
+    $("searchBtn").addEventListener("click", () => doSearch(1));
     $("searchInput").addEventListener("keydown", (e) => {
       if (e.key === "Enter") { doSearch(); $("acBox").classList.add("hidden"); }
     });
@@ -2223,27 +2249,13 @@
       addToQueue(picked);
     });
 
-    let dlRunning = false;
-    $("plDlAllBtn").addEventListener("click", async () => {
-      if (dlRunning) return;
+    $("plDlAllBtn").addEventListener("click", () => {
+      // 整单下载并入统一队列: 复用暂停/清空/去重, 音质取当前默认值的快照
       const valid = plTracks.filter(t => t.mid);
       if (!valid.length) { toast("歌单为空"); return; }
-      if (!confirm(`将按默认音质 (${DEFAULT_Q}) 依次下载 ${valid.length} 首歌曲, 继续?`)) return;
-      dlRunning = true;
-      $("plDlAllBtn").disabled = true;
-      const btnText = $("plDlAllBtn").textContent;
-      let failCnt = 0;
-      for (let i = 0; i < valid.length; i++) {
-        const t = valid[i];
-        $("plDlAllBtn").textContent = `下载中 ${i + 1}/${valid.length}`;
-        const okDl = await downloadMid(t.mid, t.name, t.singer);
-        if (!okDl) failCnt++;
-        await new Promise(r => setTimeout(r, 1200));
-      }
-      $("plDlAllBtn").textContent = btnText;
-      $("plDlAllBtn").disabled = false;
-      dlRunning = false;
-      toast(failCnt ? `批量下载完成, ${failCnt} 首失败 (详见浮动提示)` : "批量下载任务已全部发出");
+      const type = DEFAULT_Q;
+      if (!confirm(`将按默认音质把 ${valid.length} 首歌曲加入下载队列, 继续?`)) return;
+      addToQueue(valid.map(t => ({ mid: t.mid, name: t.name, singer: t.singer, type })));
     });
 
     // ==================== 解析页 ====================
@@ -2372,7 +2384,8 @@
                 };
                 if (ap) {
                   ap.list.clear();
-                  ap.list.add([audio], true);
+                  ap.list.add([audio]);
+                  try { ap.play(); } catch (err) { console.warn("APlayer play failed:", err); }
                 } else {
                   nativePlay(audio);
                 }
@@ -2528,7 +2541,7 @@
       const overlay = document.createElement("div");
       overlay.className = "site-modal";
       overlay.innerHTML = `<div class="modal-card">${cardHtml}</div>`;
-      overlay.addEventListener("click", (e) => { if (e.target === overlay) overlay.remove(); });
+      // 默认不绑遮罩关闭; 由调用方按需绑定 (公告强制阅读期间必须禁用该入口)
       document.body.appendChild(overlay);
       return overlay;
     }
@@ -2544,23 +2557,40 @@
           <span class="hint" data-wait></span>
         </div>`);
       const key = `qm-announcement-v2-${notice.version || 0}`;
-      const close = (value) => { if (value) localStorage.setItem(key, value); overlay.remove(); };
-      overlay.querySelector("[data-close]").addEventListener("click", () => close(null));
+      // 强制阅读期间所有关闭入口都禁用, 倒计时结束/异常时清理计时器
+      let countTimer = null;
+      const close = (value) => {
+        if (countTimer) clearInterval(countTimer);
+        if (value) localStorage.setItem(key, value);
+        overlay.remove();
+      };
+      // openModal 自带"点击遮罩关闭", 强制阅读时先摘除
+      const forceSeconds = force ? 0 : Number(notice.required_seconds || 0);
       const dayBtn = overlay.querySelector("[data-day]");
       const foreverBtn = overlay.querySelector("[data-forever]");
+      if (forceSeconds > 0) {
+        overlay.style.cursor = "default"; // 强制阅读: 不绑遮罩关闭
+      } else {
+        overlay.addEventListener("click", (e) => { if (e.target === overlay) close(null); });
+      }
+      overlay.querySelector("[data-close]").addEventListener("click", () => {
+        if (forceSeconds > 0 && dayBtn.disabled) return; // 倒计时未结束
+        close(null);
+      });
       dayBtn.addEventListener("click", () => close(`day:${new Date().toISOString().slice(0, 10)}`));
       foreverBtn.addEventListener("click", () => close("forever"));
       // 主动打开(顶栏按钮)不启用强制阅读; 自动弹出时按配置倒计时
-      const seconds = force ? 0 : Number(notice.required_seconds || 0);
+      const seconds = forceSeconds;
       if (seconds > 0) {
         dayBtn.disabled = foreverBtn.disabled = true;
         const wait = overlay.querySelector("[data-wait]");
         let left = seconds;
         wait.textContent = `请阅读 ${left} 秒后再关闭`;
-        const timer = setInterval(() => {
+        countTimer = setInterval(() => {
           left -= 1;
           if (left <= 0) {
-            clearInterval(timer);
+            clearInterval(countTimer);
+            countTimer = null;
             dayBtn.disabled = foreverBtn.disabled = false;
             wait.textContent = "";
           } else wait.textContent = `请阅读 ${left} 秒后再关闭`;
@@ -2581,6 +2611,7 @@
         <div class="modal-head"><strong>${escapeHtml(contact.label || "联系")}</strong><button class="q-mini" data-close>✕</button></div>
         <div class="contact-cards">${card(contact.personal)}${card(contact.group)}</div>`);
       overlay.querySelector("[data-close]").addEventListener("click", () => overlay.remove());
+      overlay.addEventListener("click", (e) => { if (e.target === overlay) overlay.remove(); });
     }
     async function initSite() {
       try { siteConfig = await api("/site"); } catch { return; }

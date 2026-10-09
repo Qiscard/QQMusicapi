@@ -215,7 +215,8 @@ async function doRequestQimei(device, appVersion, sdkVersion, doRequest) {
 export class QimeiManager {
   constructor(opts = {}) {
     this._cache = null;
-    this._lock = Promise.resolve();
+    this._registering = null;
+    this._cacheAt = 0; // 缓存写入时间戳; 超过 24h 重新校验设备侧有效期
     this._appVersion = opts.appVersion ?? "14.9.0.8";
     this._sdkVersion = opts.sdkVersion ?? "1.2.13.6";
     this._registerHook =
@@ -237,7 +238,8 @@ export class QimeiManager {
 
   /** 内部: 取 q16/q36 (使用缓存或注册) */
   async getCached(device) {
-    if (this._cache) return this._cache;
+    // 内存缓存同样遵守 24h 有效期, 与设备侧规则一致
+    if (this._cache && Date.now() - this._cacheAt < 86400_000) return this._cache;
     const now = Math.floor(Date.now() / 1000);
     if (
       device.qimei &&
@@ -246,17 +248,28 @@ export class QimeiManager {
       now - device.qimeiSaveTime < 86400
     ) {
       this._cache = { q16: device.qimei, q36: device.qimei36 };
+      this._cacheAt = Date.now();
       return this._cache;
     }
-    // 串行化注册 (同一时刻只调一次)
-    this._lock = this._lock.then(() => this._doRegister(device));
-    await this._lock;
+    // 串行化注册 (同一时刻只调一次); 失败后允许下一次重新注册
+    if (this._registering) return this._registering;
+    this._registering = this._doRegister(device)
+      .catch((e) => {
+        this._registering = null;
+        throw e;
+      });
+    try {
+      await this._registering;
+    } finally {
+      this._registering = null;
+    }
     return this._cache;
   }
 
   async _doRegister(device) {
     const result = await this._registerHook(device, this._appVersion, this._sdkVersion);
     this._cache = result;
+    this._cacheAt = Date.now();
   }
 }
 

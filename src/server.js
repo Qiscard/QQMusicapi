@@ -199,6 +199,11 @@ const QUALITY_MIN_LEVEL = {
 let accountStatsCache = { ts: 0, level: "unknown", counts: { total: 0, svip: 0, vip: 0, normal: 0 } };
 let accountStatsPending = null;
 
+/** 登录态变化 (登录/退出/刷新/换凭证) 时必须立即失效缓存 */
+function invalidateAccountStats() {
+  accountStatsCache = { ts: 0, level: "unknown", counts: { total: 0, svip: 0, vip: 0, normal: 0 } };
+}
+
 async function probeAccountLevel(client) {
   if (!client.credential.isLoggedIn()) return "none";
   const hasPurl = async (code) => {
@@ -269,12 +274,15 @@ class CredentialStore {
     return this._path;
   }
 
-  /** 替换当前凭证并原子写入文件 */
+  /** 替换当前凭证并原子写入文件; 空凭证必须显式 clear, 防止失败操作覆盖有效登录态 */
   async replace(credential) {
     const next = credential instanceof Credential ? credential : new Credential(credential);
+    if (!next.isLoggedIn()) {
+      throw new Error("拒绝写入空凭证 (登录/刷新失败时不应覆盖现有登录态, 请使用 clear())");
+    }
     this._credential = next;
     await this._persist();
-    return next;
+    return this._credential;
   }
 
   /** 与现有凭证合并并写入 */
@@ -329,8 +337,10 @@ class CredentialStore {
   }
 
   async _persist() {
-    // 串行化写操作, 避免并发覆盖
-    this._writeQueue = this._writeQueue.then(() => this._doWrite());
+    // 串行化写操作; 链断裂后重置, 保证一次失败不永久污染后续写盘
+    this._writeQueue = this._writeQueue
+      .catch(() => {})
+      .then(() => this._doWrite());
     await this._writeQueue;
   }
 
@@ -412,6 +422,10 @@ function searchRouter(client) {
 /** CDN 域名白名单: 仅允许 *.qq.com (isure/stream/aqqmusic 等均为其子域) */
 const QQ_CDN_HOST_RE = /(^|\.)qq\.com$/i;
 
+/** 并发下载上限: 无鉴权流式代理必须有背压, 防止被滥用为带宽放大器 */
+const MAX_CONCURRENT_DOWNLOADS = Number(process.env.MAX_CONCURRENT_DOWNLOADS ?? 4);
+let activeDownloads = 0;
+
 function sanitizeFilename(s) {
   return String(s ?? "")
     .replace(/[\\/:*?"<>|\r\n\0]/g, "_")
@@ -435,32 +449,55 @@ async function streamDownload(ctx, url, { name, singer, ext }) {
   if (!QQ_CDN_HOST_RE.test(parsed.hostname)) {
     ctx.throw(502, `直链域名不在白名单: ${parsed.hostname}`);
   }
-  const upstream = await undiciRequest(url, {
-    method: "GET",
-    headers: { "User-Agent": "QQMusic" },
-    maxRedirections: 5,
-  });
-  if (upstream.statusCode !== 200) {
-    upstream.body?.destroy?.();
-    ctx.throw(502, `CDN 返回 HTTP ${upstream.statusCode}`);
+  if (activeDownloads >= MAX_CONCURRENT_DOWNLOADS) {
+    ctx.status = 429;
+    ctx.body = fail(429, `下载并发已达上限 (${MAX_CONCURRENT_DOWNLOADS}), 请稍后重试`);
+    return;
   }
-  const base =
-    [sanitizeFilename(singer), sanitizeFilename(name)].filter(Boolean).join(" - ") ||
-    `qqmusic_${Date.now()}`;
-  const filename = `${base}${ext || ".mp3"}`;
-  ctx.status = 200;
-  ctx.set(
-    "Content-Type",
-    upstream.headers["content-type"] ?? "application/octet-stream",
-  );
-  const len = upstream.headers["content-length"];
-  if (len) ctx.set("Content-Length", len);
-  ctx.set(
-    "Content-Disposition",
-    `attachment; filename="download${ext || ".mp3"}"; filename*=UTF-8''${encodeURIComponent(filename)}`,
-  );
-  // undici 的 res.body (BodyReadable) 本身就是 Node Readable, Koa 可直接消费
-  ctx.body = upstream.body;
+  activeDownloads++;
+  let upstream;
+  const release = () => {
+    if (activeDownloads > 0) activeDownloads--;
+  };
+  try {
+    upstream = await undiciRequest(url, {
+      method: "GET",
+      headers: { "User-Agent": "QQMusic" },
+      maxRedirections: 5,
+    });
+    if (upstream.statusCode !== 200) {
+      upstream.body?.destroy?.();
+      ctx.throw(502, `CDN 返回 HTTP ${upstream.statusCode}`);
+    }
+    const base =
+      [sanitizeFilename(singer), sanitizeFilename(name)].filter(Boolean).join(" - ") ||
+      `qqmusic_${Date.now()}`;
+    const filename = `${base}${ext || ".mp3"}`;
+    ctx.status = 200;
+    ctx.set(
+      "Content-Type",
+      upstream.headers["content-type"] ?? "application/octet-stream",
+    );
+    const len = upstream.headers["content-length"];
+    if (len) ctx.set("Content-Length", len);
+    ctx.set(
+      "Content-Disposition",
+      `attachment; filename="download${ext || ".mp3"}"; filename*=UTF-8''${encodeURIComponent(filename)}`,
+    );
+    // undici 的 res.body (BodyReadable) 本身就是 Node Readable, Koa 可直接消费
+    ctx.body = upstream.body;
+    // 客户端断开或流结束/出错时释放并发槽位并关闭上游
+    ctx.res.on("close", () => {
+      upstream.body?.destroy?.();
+      release();
+    });
+    ctx.body.on?.("end", release);
+    ctx.body.on?.("error", release);
+  } catch (e) {
+    upstream?.body?.destroy?.();
+    release();
+    throw e;
+  }
 }
 
 // ==================== 路由: /song ====================
@@ -567,6 +604,8 @@ function userRouter(client) {
   const router = new Router({ prefix: "/user" });
 
   router.get("/self", async (ctx) => {
+    // 返回的是全局登录账号的完整资料, 公开暴露会泄露会员账号信息, 需管理员密钥
+    requireAdmin(ctx);
     ctx.body = ok(await client.user.getSelfInfo());
   });
 
@@ -623,9 +662,10 @@ function loginRouter(client, store) {
     await next();
   });
 
-  /** 同步内存凭证与 store (启动时已加载, 这里只保证运行时一致) */
+  /** 同步内存凭证与 store, 并使账号等级缓存失效 (启动时已加载, 这里保证运行时一致) */
   const syncClient = () => {
     client.credential = store.credential;
+    invalidateAccountStats();
   };
 
   router.get("/status", async (ctx) => {
@@ -757,7 +797,7 @@ function mediaRouter(client) {
     ctx.body = ok(await client.playlist.getAlbumTracks(albummid));
   });
 
-  /** 用户歌单: 创建的 (含私有) + 收藏的 (需登录态) */
+  /** 用户歌单: 创建的 (含私有) + 收藏的 (需登录态); 私有歌单元数据不对外暴露 */
   router.get("/user/songlists", async (ctx) => {
     const uin = String(ctx.query.uin ?? "").trim();
     if (!/^\d+$/.test(uin)) ctx.throw(400, "uin 必填 (数字 QQ 号)");
@@ -765,7 +805,7 @@ function mediaRouter(client) {
     const collected = await client.playlist.getUserCollectedPlaylists(uin);
     ctx.body = ok({
       hostname: created.hostname,
-      created: created.lists,
+      created: created.lists.filter((l) => l.visible !== false),
       collected: collected.lists,
     });
   });
@@ -959,6 +999,30 @@ function adminSite(data) {
 
 // ==================== 应用装配 ====================
 
+/** 统一安全响应头: 无 CSP 的页面只靠转义防 XSS, 补一道纵深防御 */
+function securityHeaders(ctx, { html = false } = {}) {
+  ctx.set("X-Content-Type-Options", "nosniff");
+  ctx.set("X-Frame-Options", "DENY");
+  ctx.set("Referrer-Policy", "no-referrer");
+  if (html) {
+    ctx.set(
+      "Content-Security-Policy",
+      [
+        "default-src 'self'",
+        // APlayer 内联样式/脚本与页面 <style>/<script> 需要 unsafe-inline;
+        // 音频直链/封面/公告图片来自 qq.com CDN
+        "img-src 'self' data: https://*.qq.com https://*.gtimg.cn",
+        "media-src 'self' https://*.qq.com",
+        "style-src 'self' 'unsafe-inline'",
+        "script-src 'self' 'unsafe-inline'",
+        // aria2 RPC 地址由用户在下载设置中自由配置 (默认本机), 无法枚举;
+        // connect-src 用 http: 通配保持可用性, XSS 防线主要靠 script-src 与转义
+        "connect-src 'self' https: http:",
+      ].join("; "),
+    );
+  }
+}
+
 function createApp(options = {}) {
   const devicePath = options.devicePath;
   const credentialPath = options.credentialPath;
@@ -978,6 +1042,14 @@ function createApp(options = {}) {
   const app = new Koa();
   app.use(errorHandler);
   app.use(bodyParser({ jsonLimit: "1mb" }));
+  // 所有响应统一带基础安全头
+  app.use(async (ctx, next) => {
+    const isHtml =
+      ctx.method === "GET" &&
+      (ctx.path === "/" || ctx.path === "/login");
+    securityHeaders(ctx, { html: isHtml });
+    await next();
+  });
 
   // 3. 健康检查 + 首页
   const root = new Router();

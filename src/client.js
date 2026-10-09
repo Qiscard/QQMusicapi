@@ -324,8 +324,12 @@ export class Client {
   }
 
   _parseCgiItem(item, request) {
-    const code = item?.code ?? 0;
-    const data = item?.data ?? {};
+    // 缺失业务响应 (req_0) 属于协议异常, 不能默认为成功空结果
+    if (!item || typeof item !== "object") {
+      throw new ApiDataError("响应缺少业务数据 (req_0)");
+    }
+    const code = item.code ?? 0;
+    const data = item.data ?? {};
     if (request.allowErrorCodes) {
       const allowed =
         request.allowErrorCodes === "all" ||
@@ -336,7 +340,9 @@ export class Client {
         if (request.parseOnAllow && request.responseModel) {
           return new request.responseModel(data);
         }
-        return data;
+        // allowErrorCodes 调用方依赖错误码语义, 必须保留完整 CGI envelope
+        // ({ code, data }), 不能只返回解包后的 data (否则错误码被静默吞掉).
+        return { code, data };
       }
     }
     switch (code) {
@@ -360,7 +366,12 @@ export class Client {
   }
 
   async _ensureSession() {
-    if (this._sessionEnsured) return;
+    // 与 _isSessionValid 的 24h 规则一致, 内存标记不能绕过有效期
+    if (this._sessionEnsured) {
+      const device = await this._deviceStore.getDevice();
+      if (this._isSessionValid(device)) return;
+      this._sessionEnsured = false;
+    }
     if (this._sessionEnsuring) return this._sessionEnsuring;
     this._sessionEnsuring = this._doEnsureSession();
     try {

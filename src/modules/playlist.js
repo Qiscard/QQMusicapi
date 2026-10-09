@@ -98,8 +98,9 @@ export class PlaylistApi extends ApiModule {
     if (!cd) throw new ApiDataError("歌单不存在或无权访问");
     let tracks = cd.songlist ?? [];
     const total = Number(cd.songnum ?? tracks.length) || tracks.length;
-    // 分页补齐 (极端情况下服务端未一次性返回全部)
+    // 分页补齐 (极端情况下服务端未一次性返回全部); 保护上限后显式标记未取全
     let guard = 0;
+    let complete = true;
     while (tracks.length < total && guard < 20) {
       const page = await this._fetchPlaylistPage(id, tracks.length);
       const list = page?.cdlist?.[0]?.songlist ?? [];
@@ -107,6 +108,7 @@ export class PlaylistApi extends ApiModule {
       tracks = tracks.concat(list);
       guard++;
     }
+    if (tracks.length < total) complete = false;
     return {
       disstid: id,
       name: cd.dissname || "",
@@ -114,6 +116,8 @@ export class PlaylistApi extends ApiModule {
       creator: cd.nickname || cd.creator?.nick || "",
       songnum: total,
       tracks: tracks.map(PlaylistApi.normalizeTrack),
+      fetched: tracks.length,
+      complete,
     };
   }
 
@@ -228,9 +232,18 @@ export class PlaylistApi extends ApiModule {
       headers: { Referer: "https://y.qq.com/" },
     });
     const d = resp.data;
-    // 隐私限制 (4000) / 未登录 (1000) 时静默为空
+    // 仅对明确的隐私限制 (4000) / 未登录 (1000) 静默为空;
+    // 其他错误 (限流/服务异常/HTML 错误页) 必须抛出, 不能伪装成"没有收藏"
     if (typeof d === "string" || (d?.code && d.code !== 0)) {
-      return { total: 0, lists: [] };
+      const code = typeof d === "string" ? null : d.code;
+      if (code === 4000 || code === 1000 || typeof d === "string") {
+        // privacy 限制或 HTML 响应按上游惯例视为不可见
+        if (typeof d !== "string" && (code === 4000 || code === 1000)) {
+          return { total: 0, lists: [] };
+        }
+        throw new ApiDataError(`收藏歌单接口返回异常: ${String(d).slice(0, 100)}`);
+      }
+      throw new ApiDataError(`获取收藏歌单失败: code ${code}`);
     }
     const lists = (d.data?.cdlist ?? []).map((it) => ({
       disstid: it.disstid ? String(it.disstid) : null,

@@ -529,6 +529,17 @@
   <script>
     const $ = (id) => document.getElementById(id);
 
+    function escapeHtml(s) {
+      const MAP = {
+        "&": "&amp;",
+        "<": "&lt;",
+        ">": "&gt;",
+        "\"": "&quot;",
+        "'": "&#39;",
+      };
+      return String(s ?? "").replace(/[&<>"']/g, c => MAP[c]);
+    }
+
     // ==================== 管理员密钥 ====================
     // 密钥只保存在浏览器 localStorage, 由服务端环境变量 ADMIN_KEY 校验;
     // 校验通过前整个后台界面被密钥门遮挡.
@@ -562,6 +573,12 @@
       $("keyGate").classList.add("hidden");
       checkStatus();
       loadQrCode();
+      // 无论自动登录还是手动输入密钥, 进入后台都必须先拉取当前配置,
+      // 否则表单空值会覆盖服务端已有公告/联系方式
+      $("saveSiteBtn").disabled = true;
+      loadSite()
+        .catch((e) => showMsg($("siteMsg"), "err", `公告配置加载失败: ${e.message}`))
+        .finally(() => { $("saveSiteBtn").disabled = false; });
     }
 
     async function tryEnter() {
@@ -772,30 +789,33 @@
         main.appendChild(tip);
       }
 
-      // 标签
+      // 标签 (所有字段经 escapeHtml, 防止上游资料注入 HTML)
       const tags = document.createElement("div");
       tags.className = "user-tags";
-      if (isVip || vipLevel) tags.innerHTML += `<span class="tag vip">VIP${vipLevel ? " " + vipLevel : ""}</span>`;
-      if (uin) tags.innerHTML += `<span class="tag blue">QQ: ${uin}</span>`;
+      const tagHtml = [];
+      if (isVip || vipLevel) tagHtml.push(`<span class="tag vip">VIP${vipLevel ? " " + escapeHtml(String(vipLevel)) : ""}</span>`);
+      if (uin) tagHtml.push(`<span class="tag blue">QQ: ${escapeHtml(String(uin))}</span>`);
       if (gender !== "") {
         const g = String(gender) === "1" ? "男" : String(gender) === "2" ? "女" : "保密";
-        tags.innerHTML += `<span class="tag">${g}</span>`;
+        tagHtml.push(`<span class="tag">${g}</span>`);
       }
+      tags.innerHTML = tagHtml.join("");
       if (tags.innerHTML) main.appendChild(tags);
 
-      // 详细元信息
+      // 详细元信息 (数值字段先做数值校验, 文本经 escapeHtml)
       const meta = document.createElement("div");
       meta.className = "user-meta";
       let metaHtml = "";
       if (country || province || city) {
-        const loc = [country, province, city].filter(Boolean).join(" / ");
+        const loc = [country, province, city].filter(Boolean).map(v => escapeHtml(String(v))).join(" / ");
         metaHtml += `<span>📍 ${loc}</span>`;
       }
-      if (age) metaHtml += `<span>🎂 ${age} 岁</span>`;
-      if (fansNum !== "") metaHtml += `<span>👥 粉丝 ${fansNum}</span>`;
-      if (followNum !== "") metaHtml += `<span>➤ 关注 ${followNum}</span>`;
-      if (songNum !== "") metaHtml += `<span>🎵 歌曲 ${songNum}</span>`;
-      if (playlistNum !== "") metaHtml += `<span>📋 歌单 ${playlistNum}</span>`;
+      const num = (v) => { const n = Number(v); return Number.isFinite(n) && n > 0 ? n : null; };
+      if (num(age)) metaHtml += `<span>🎂 ${num(age)} 岁</span>`;
+      if (num(fansNum) !== null) metaHtml += `<span>👥 粉丝 ${num(fansNum)}</span>`;
+      if (num(followNum) !== null) metaHtml += `<span>➤ 关注 ${num(followNum)}</span>`;
+      if (num(songNum) !== null) metaHtml += `<span>🎵 歌曲 ${num(songNum)}</span>`;
+      if (num(playlistNum) !== null) metaHtml += `<span>📋 歌单 ${num(playlistNum)}</span>`;
       meta.innerHTML = metaHtml;
       main.appendChild(meta);
 
@@ -843,8 +863,14 @@
 
     let qrIdentifier = null;
     let qrPollTimer = null;
+    let qrSession = 0; // 二维码会话代次: 刷新后旧轮询响应全部失效
 
     async function loadQrCode() {
+      // 新二维码使旧会话立即失效: 旧轮询的迟到响应不能再终止新会话
+      stopQrPoll();
+      qrIdentifier = null;
+      qrSession++;
+      const session = qrSession;
       $("qrBox").className = "qr-box loading";
       $("qrBox").innerHTML = "";
       $("qrState").className = "qr-state";
@@ -855,6 +881,7 @@
           headers: { "Content-Type": "application/json" },
           body: JSON.stringify({ type: "qq" })
         });
+        if (session !== qrSession) return; // 已有更新的二维码请求
         qrIdentifier = d.identifier;
         $("qrBox").className = "qr-box";
         const img = document.createElement("img");
@@ -865,6 +892,7 @@
         $("qrState").textContent = "请使用 QQ 扫描二维码";
         startQrPoll();
       } catch (e) {
+        if (session !== qrSession) return;
         $("qrState").className = "qr-state err";
         $("qrState").textContent = `获取二维码失败: ${e.message}`;
         showMsg($("qrMsg"), "err", e.message);
@@ -882,12 +910,14 @@
 
     async function pollQr() {
       if (!qrIdentifier) return;
+      const session = qrSession;
       try {
         const d = await api("/login/checkQrcode", {
           method: "POST",
           headers: { "Content-Type": "application/json" },
           body: JSON.stringify({ identifier: qrIdentifier, type: "qq" })
         });
+        if (session !== qrSession) return; // 旧会话的迟到响应, 丢弃
         const ev = d.event;
         const map = { 0: "DONE", 1: "SCAN", 2: "CONF", 3: "REFUSE", 4: "TIMEOUT", "-1": "OTHER" };
         const name = map[ev] || `UNKNOWN(${ev})`;
@@ -910,6 +940,7 @@
           stopQrPoll();
         }
       } catch (e) {
+        if (session !== qrSession) return;
         stopQrPoll();
         $("qrState").className = "qr-state err";
         $("qrState").textContent = `轮询失败: ${e.message}`;
@@ -940,10 +971,15 @@
       if (countdownTimer) { clearInterval(countdownTimer); countdownTimer = null; }
     }
 
+    let sendCodeInFlight = false;
     $("sendCodeBtn").addEventListener("click", async () => {
       const phone = $("phoneInput").value.trim();
       const cc = $("ccInput").value.trim() || "86";
       if (!phone) { showMsg($("phoneMsg"), "err", "请输入手机号"); return; }
+      // 防重入: 请求未返回前禁用, 防止重复短信/频控
+      if (sendCodeInFlight) return;
+      sendCodeInFlight = true;
+      $("sendCodeBtn").disabled = true;
       try {
         const d = await api("/login/sendAuthcode", {
           method: "POST",
@@ -955,14 +991,19 @@
           startCountdown(60);
         } else if (d.event === "CAPTCHA") {
           showMsg($("phoneMsg"), "err", "需要人机验证，暂不支持");
+          $("sendCodeBtn").disabled = false;
         } else if (d.event === "FREQUENCY") {
           showMsg($("phoneMsg"), "err", "发送过于频繁，请稍后再试");
           startCountdown(30);
         } else {
           showMsg($("phoneMsg"), "err", `未知响应: ${d.event}`);
+          $("sendCodeBtn").disabled = false;
         }
       } catch (e) {
         showMsg($("phoneMsg"), "err", `发送失败: ${e.message}`);
+        $("sendCodeBtn").disabled = false;
+      } finally {
+        sendCodeInFlight = false;
       }
     });
 
@@ -1055,8 +1096,7 @@
     (async function gateInit() {
       const stored = getAdminKey();
       if (stored && await verifyKey(stored)) {
-        enterAdmin();
-        loadSite().catch((e) => showMsg($("siteMsg"), "err", e.message));
+        enterAdmin(); // loadSite 已并入 enterAdmin, 不再重复调用
       } else {
         if (stored) setAdminKey(""); // 失效密钥清除
         showGate();
