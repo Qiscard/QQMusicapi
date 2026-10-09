@@ -387,12 +387,6 @@
       0%, 15% { transform: translateX(0); }
       85%, 100% { transform: translateX(var(--shift, -40px)); }
     }
-    .song-table .icon-btn {
-      width: 26px; height: 26px; padding: 0; margin-right: 0;
-      display: inline-flex; align-items: center; justify-content: center;
-      border-radius: 6px;
-    }
-    .song-table .icon-btn svg { display: block; width: 16px; height: 16px; fill: currentColor; }
     .song-table .t-idx { color: #5a6170; width: 34px; }
     .song-table .t-actions { white-space: nowrap; }
     .song-table .t-actions button {
@@ -407,6 +401,14 @@
       cursor: pointer;
       transition: all .15s;
     }
+    /* 图标按钮: 带元素选择器保证特异性高于上面的 `.t-actions button`,
+       否则 padding 6px 14px 会赢并把 inline-flex 内容盒压成 0, svg 图标随之消失 */
+    .song-table .t-actions button.icon-btn {
+      width: 26px; height: 26px; padding: 0; margin-right: 0;
+      display: inline-flex; align-items: center; justify-content: center;
+      border-radius: 6px;
+    }
+    .song-table .t-actions button.icon-btn svg { display: block; width: 16px; height: 16px; fill: currentColor; flex-shrink: 0; }
     .song-table .t-actions button:hover { border-color: #4ea1ff; color: #4ea1ff; }
     .song-table .t-actions button.primary {
       background: #4ea1ff;
@@ -2047,9 +2049,9 @@
             <td class="t-sub">${escapeHtml((it.singer || []).map(s => s.name).join(" / ") || "-")}</td>
             <td class="t-sub t-album">${escapeHtml(it.album?.name || "-")}</td>
             <td class="t-actions">
-              <button class="primary icon-btn" data-act="dl" type="button" title="下载">${ICONS.dl}</button>
-              <button class="icon-btn" data-act="play" type="button" title="播放">${ICONS.play}</button>
-              <button class="icon-btn" data-act="parse" type="button" title="解析">${ICONS.parse}</button>
+              <button class="primary icon-btn" data-act="dl" type="button" title="下载" aria-label="下载">${ICONS.dl}</button>
+              <button class="icon-btn" data-act="play" type="button" title="播放" aria-label="播放">${ICONS.play}</button>
+              <button class="icon-btn" data-act="parse" type="button" title="解析" aria-label="解析">${ICONS.parse}</button>
             </td>`;
           const name = it.name || "";
           const singer = (it.singer || []).map(s => s.name).join(" / ");
@@ -2204,9 +2206,9 @@
             <td class="t-sub">${escapeHtml(t.singer || "-")}</td>
             <td class="t-sub t-album">${escapeHtml(t.albumName || "-")}</td>
             <td class="t-actions">
-              <button class="primary icon-btn" data-act="dl" type="button" title="下载">${ICONS.dl}</button>
-              <button class="icon-btn" data-act="play" type="button" title="播放">${ICONS.play}</button>
-              <button class="icon-btn" data-act="parse" type="button" title="解析">${ICONS.parse}</button>
+              <button class="primary icon-btn" data-act="dl" type="button" title="下载" aria-label="下载">${ICONS.dl}</button>
+              <button class="icon-btn" data-act="play" type="button" title="播放" aria-label="播放">${ICONS.play}</button>
+              <button class="icon-btn" data-act="parse" type="button" title="解析" aria-label="解析">${ICONS.parse}</button>
             </td>`;
           // 复选框点击不冒泡
           const cb = tr.querySelector(".row-sel");
