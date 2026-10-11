@@ -1011,9 +1011,10 @@ function securityHeaders(ctx, { html = false } = {}) {
       [
         "default-src 'self'",
         // APlayer 内联样式/脚本与页面 <style>/<script> 需要 unsafe-inline;
-        // 音频直链/封面/公告图片来自 qq.com CDN
-        "img-src 'self' data: https://*.qq.com https://*.gtimg.cn",
-        "media-src 'self' https://*.qq.com",
+        // 音频直链来自 qq.com CDN 且部分仅提供 http (aqqmusic.tc.qq.com),
+        // 页面自身为 http 服务, 放行 http://*.qq.com 不构成混合内容
+        "img-src 'self' data: http://*.qq.com https://*.qq.com https://*.gtimg.cn",
+        "media-src 'self' http://*.qq.com https://*.qq.com",
         "style-src 'self' 'unsafe-inline'",
         "script-src 'self' 'unsafe-inline'",
         // aria2 RPC 地址由用户在下载设置中自由配置 (默认本机), 无法枚举;
