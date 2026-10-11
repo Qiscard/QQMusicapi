@@ -32,6 +32,7 @@ import { Credential } from "./models/credential.js";
 import { SearchType } from "./modules/search.js";
 import { SongFileType, parseSongFileType } from "./modules/song_filetype.js";
 import { QrLoginType } from "./modules/login.js";
+import { CredentialExpiredError } from "./exceptions.js";
 import { qrcDecrypt } from "./algorithms/qrc.js";
 
 // ==================== 响应辅助 ====================
@@ -1039,9 +1040,89 @@ function createApp(options = {}) {
     credential: store.credential.toJSON(),
   });
 
+  // ==================== 凭证自动保活 ====================
+  // musickey 有效期约 72h (keyExpiresIn=259200), refresh_key 不刷新也会随 musickey 一起失效,
+  // 之后只能重新扫码登录. 因此在剩余有效期不足时主动续期, 并在业务请求撞上过期时被动兜底刷新.
+  const KEEPER_INTERVAL_MS = Number(process.env.CREDENTIAL_KEEP_INTERVAL ?? 6 * 3600 * 1000);
+  const REFRESH_AHEAD_SECONDS = Number(process.env.CREDENTIAL_REFRESH_AHEAD ?? 24 * 3600);
+  let refreshInFlight = null;
+
+  const credentialExpiresAt = (cred) =>
+    cred.musickeyCreateTime && cred.keyExpiresIn ? cred.musickeyCreateTime + cred.keyExpiresIn : null;
+
+  /** 单飞刷新: 并发触发只执行一次; 失败时清空 in-flight 让下次可重试 */
+  const refreshCredentialOnce = (reason) => {
+    if (!refreshInFlight) {
+      refreshInFlight = (async () => {
+        const cred = store.credential;
+        if (!cred.isLoggedIn()) return { refreshed: false, reason: "未登录" };
+        const before = credentialExpiresAt(cred);
+        const next = await client.login.refreshCredential(cred);
+        await store.replace(next);
+        client.credential = store.credential;
+        invalidateAccountStats();
+        const after = credentialExpiresAt(store.credential);
+        console.log(
+          `[qqmusic-api] 凭证自动续期 (${reason}): ` +
+            `过期时间 ${after ? new Date(after * 1000).toISOString() : "?"}` +
+            (before ? ` (此前 ${new Date(before * 1000).toISOString()})` : ""),
+        );
+        return { refreshed: true, reason };
+      })().finally(() => { refreshInFlight = null; });
+    }
+    return refreshInFlight;
+  };
+
+  /** 定时巡检: musickey 剩余有效期不足或已过期时续期; refresh_token 也失效则告警并停止循环 */
+  const credentialKeeper = async () => {
+    const cred = store.credential;
+    if (!cred.isLoggedIn()) return;
+    const expiresAt = credentialExpiresAt(cred);
+    const now = Math.floor(Date.now() / 1000);
+    // keyExpiresIn 缺失时无法预判, 跳过本地判断 (被动兜底仍生效)
+    if (!expiresAt) return;
+    if (expiresAt - now >= REFRESH_AHEAD_SECONDS) return;
+    try {
+      await refreshCredentialOnce(expiresAt < now ? "已过期, 恢复" : `剩余 ${(expiresAt - now) / 3600}h, 提前续期`);
+    } catch (e) {
+      // refresh_token 失效 (code 3000x / 登录鉴权过期类): 无法自动恢复, 提示需重新登录
+      console.error(`[qqmusic-api] 凭证自动续期失败, 需手动重新登录: ${e.message}`);
+    }
+  };
+  const keeperTimer = setInterval(() => { credentialKeeper().catch(() => {}); }, KEEPER_INTERVAL_MS);
+  keeperTimer.unref?.();
+  // 启动后先做一次巡检 (错开启动高峰, 延迟 30s)
+  const keeperBootTimer = setTimeout(() => { credentialKeeper().catch(() => {}); }, 30 * 1000);
+  keeperBootTimer.unref?.();
+
   const app = new Koa();
   app.use(errorHandler);
   app.use(bodyParser({ jsonLimit: "1mb" }));
+  // 被动兜底: 业务请求撞上"凭证已过期"时自动续期一次并重放请求
+  // (不适用于已写出的响应/上传; koa-bodyparser 已在前, ctx.request.body 可复用)
+  app.use(async (ctx, next) => {
+    try {
+      await next();
+    } catch (e) {
+      if (!(e instanceof CredentialExpiredError)) throw e;
+      let result;
+      try {
+        result = await refreshCredentialOnce(`请求 ${ctx.method} ${ctx.path} 撞上过期凭证`);
+      } catch (refreshErr) {
+        // 刷新链也失效 (refresh_token 过期): 明确告知需要重新登录, 而非笼统的 500
+        const status = 401;
+        ctx.status = status;
+        ctx.body = fail(refreshErr.code ?? status, `凭证已过期且自动续期失败, 请重新登录 (${refreshErr.message})`, null);
+        console.error("[qqmusic-api] 自动续期失败 (需重新登录):", refreshErr.message);
+        return;
+      }
+      if (!result.refreshed) {
+        // 未登录状态撞上过期码: 原样抛出, 由 errorHandler 兜底
+        throw e;
+      }
+      await next();
+    }
+  });
   // 所有响应统一带基础安全头
   app.use(async (ctx, next) => {
     const isHtml =
@@ -1056,12 +1137,16 @@ function createApp(options = {}) {
   root.get("/health", async (ctx) => {
     // 账号统计按等级汇总, 不暴露具体账号 (首页公开可访问)
     const stats = await getAccountStats(client);
+    const expiresAt = credentialExpiresAt(store.credential);
     ctx.body = ok({
       status: "ok",
       time: new Date().toISOString(),
       loggedIn: store.credential.isLoggedIn(),
       accounts: stats.counts,
       accountLevel: stats.level,
+      // 凭证过期时间戳 (秒); null 表示凭证未携带有效期信息
+      credentialExpiresAt: expiresAt,
+      credentialExpired: expiresAt !== null && Math.floor(Date.now() / 1000) >= expiresAt,
     });
   });
 

@@ -962,8 +962,8 @@
         height: 34px; padding: 0 10px; font-size: 12px;
       }
 
-      /* 整体紧凑 */
-      .layout { padding: 86px 6px 68px; }
+      /* 整体紧凑 (mobileNav 在文档流内, 不需要为它预留 padding-top) */
+      .layout { padding: 10px 6px 68px; }
       .input-row { gap: 6px; margin-bottom: 10px; }
       .input-row input { flex: 1; padding: 8px 10px; font-size: 13px; height: 36px; box-sizing: border-box; }
       .input-row button { padding: 8px 14px; font-size: 13px; white-space: nowrap; height: 36px; box-sizing: border-box; flex-shrink: 0; }
