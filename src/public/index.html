@@ -217,6 +217,32 @@
       font-size: 11px; color: #6a7080;
       overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
     }
+
+    /* ==================== 播放列表 ==================== */
+    .pl-panel-toolbar { display: flex; gap: 4px; flex-wrap: wrap; align-items: center; margin-bottom: 8px; }
+    .pl-mode-btn.active { background: #4ea1ff; border-color: #4ea1ff; color: #0f1115; font-weight: 600; }
+    .pl-count { font-size: 11px; color: #6a7080; font-weight: 400; }
+    .pl-list { max-height: 260px; overflow-y: auto; }
+    .pl-item {
+      display: flex; gap: 6px; align-items: center;
+      padding: 4px 6px; border-bottom: 1px solid #1d222b; border-radius: 6px;
+      font-size: 12px; cursor: pointer; transition: background .12s;
+    }
+    .pl-item:hover { background: #1a1e26; }
+    .pl-item.playing { background: #1a1e26; box-shadow: inset 2px 0 0 #4ea1ff; }
+    .pl-item .pl-idx { width: 18px; color: #5a6170; font-size: 11px; text-align: right; flex-shrink: 0; }
+    .pl-item.playing .pl-idx { color: #4ea1ff; }
+    .pl-item .pl-name { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+    .pl-item .pl-singer { color: #6a7080; font-size: 11px; max-width: 88px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; flex-shrink: 0; }
+    .pl-item .pl-rm { opacity: 0; padding: 2px 7px; flex-shrink: 0; }
+    .pl-item:hover .pl-rm { opacity: 1; }
+    .pl-item.drag-over { box-shadow: inset 0 2px 0 #4ea1ff; }
+    /* 自建播放列表面板已接管曲目视图, 隐藏 APlayer 内置列表避免重复 */
+    .aplayer .aplayer-list { display: none !important; }
+    body.light .pl-item { border-bottom-color: #eef1f5; }
+    body.light .pl-item:hover, body.light .pl-item.playing { background: #f3f6fa; }
+    body.light .pl-mode-btn.active { color: #ffffff; }
+
     /* ==================== 手机端专用 (PC 端元素隐藏, 布局不变; 媒体查询统一置于样式表末尾) ==================== */
     #mobileMenuBtn, #mobileMenu, #miniPlayerToggle, .mobile-nav { display: none; }
 
@@ -1033,6 +1059,8 @@
       header .queue-toggle, header a.login-link,
       .t-actions button, .toolbar button, .pager button,
       .form-row button, .actions button, #mobileMenuBtn { white-space: nowrap; }
+      /* 触屏无 hover: 播放列表移除按钮常显 */
+      .pl-item .pl-rm { opacity: 1; }
       /* 右侧抽屉与 Toast 避开底部播放器 */
       .queue-drawer { bottom: 58px; right: 6px; width: min(300px, calc(100vw - 12px)); }
       .toast { bottom: 64px; }
@@ -1099,6 +1127,7 @@
         <h2>搜索结果</h2>
         <div class="toolbar">
           <button class="primary" id="searchQueueBtn">添加到下载队列</button>
+          <button id="searchPlBtn" type="button">加入播放列表</button>
           <label><input type="checkbox" id="searchSelAll" /> 全选</label>
           <span class="hint" id="searchSelHint"></span>
         </div>
@@ -1146,6 +1175,8 @@
         </div>
         <div class="toolbar">
           <button class="primary" id="plQueueBtn">添加到下载队列</button>
+          <button id="plPlBtn" type="button">加入播放列表</button>
+          <button id="plPlAllBtn" type="button">全部加入播放列表</button>
           <label><input type="checkbox" id="plSelAll" /> 全选</label>
           <span class="hint" id="plSelHint"></span>
         </div>
@@ -1174,6 +1205,7 @@
             <div class="singer" id="songSinger"></div>
             <div class="album" id="songAlbum"></div>
             <div class="ids" id="songIds"></div>
+            <div style="margin-top:8px;"><button class="q-mini primary" id="parsePlBtn" type="button">加入播放列表</button></div>
           </div>
         </div>
       </div>
@@ -1227,6 +1259,22 @@
            <div class="history-list" id="historyList"><div class="empty">暂无播放记录</div></div>
          </div>
        </div>
+       <div class="panel-block collapsed" id="blockPlaylist">
+         <h2 class="panel-toggle"><span>播放列表 <span class="pl-count" id="plCount"></span></span><span class="chev">▾</span></h2>
+         <div class="panel-body">
+           <div class="pl-panel-toolbar">
+             <button class="q-mini pl-mode-btn" data-mode="seq" type="button" title="顺序播放 (播完停止)">顺序</button>
+             <button class="q-mini pl-mode-btn" data-mode="loop" type="button" title="列表循环">循环</button>
+             <button class="q-mini pl-mode-btn" data-mode="one" type="button" title="单曲循环">单曲</button>
+             <button class="q-mini pl-mode-btn" data-mode="shuffle" type="button" title="随机播放">随机</button>
+             <button class="q-mini" id="plClearBtn" type="button">清空</button>
+           </div>
+           <div class="pl-list" id="playlistList"><div class="empty">播放列表为空<br>歌曲行的 ＋ 按钮可加入</div></div>
+           <div style="display:flex; gap:6px; margin-top:8px;">
+             <button class="q-mini" id="plToQueueBtn" type="button">整单加入下载队列</button>
+           </div>
+         </div>
+       </div>
      </div>
    </div>
   </div>
@@ -1276,7 +1324,8 @@
     const ICONS = {
       dl: '<svg viewBox="0 0 1024 1024" width="16" height="16"><path d="M179.2 716.8v-204.8a25.6 25.6 0 0 1 51.2 0v204.8A76.8 76.8 0 0 0 307.2 793.6h409.6a76.8 76.8 0 0 0 76.8-76.8v-204.8a25.6 25.6 0 0 1 51.2 0v204.8a128 128 0 0 1-128 128H307.2A128 128 0 0 1 179.2 716.8z"/><path d="M486.4 665.6V204.8a25.6 25.6 0 0 1 51.2 0v460.8a25.6 25.6 0 0 1-51.2 0z"/><path d="M680.0896 490.9056a25.6 25.6 0 0 1 6.656 35.584l-71.8848 104.448c-26.2656 38.0928-63.0784 60.2624-102.8608 60.2624-39.7824 0-76.5952-22.1696-102.8608-60.3136l-71.8336-104.3968a25.6 25.6 0 0 1 42.1888-28.9792l71.8336 104.3968c18.944 27.4432 41.3184 38.0928 60.672 38.0928 19.4048 0 41.728-10.6496 60.672-38.0928l71.8336-104.448a25.6 25.6 0 0 1 35.584-6.5536z"/></svg>',
       play: '<svg viewBox="0 0 1024 1024" width="16" height="16"><path d="M381.013333 182.613333L796.16 431.786667a93.013333 93.013333 0 0 1 0 160.426666L381.013333 841.386667A93.013333 93.013333 0 0 1 245.333333 759.893333V264.106667a93.013333 93.013333 0 0 1 135.68-81.493334z"/></svg>',
-      parse: '<svg viewBox="0 0 1024 1024" width="16" height="16"><path d="M469.333333 170.666667a298.666667 298.666667 0 1 0 0.042667 597.333333A298.666667 298.666667 0 0 0 469.333333 170.666667z m0 85.333333a213.333333 213.333333 0 1 1-0.042666 426.666667A213.333333 213.333333 0 0 1 469.333333 256z"/><path d="M650.069333 650.069333a42.666667 42.666667 0 0 1 60.330667 0l181.013333 181.013334a42.666667 42.666667 0 0 1-60.330666 60.330666l-181.013334-181.013333a42.666667 42.666667 0 0 1 0-60.330667z"/></svg>'
+      parse: '<svg viewBox="0 0 1024 1024" width="16" height="16"><path d="M469.333333 170.666667a298.666667 298.666667 0 1 0 0.042667 597.333333A298.666667 298.666667 0 0 0 469.333333 170.666667z m0 85.333333a213.333333 213.333333 0 1 1-0.042666 426.666667A213.333333 213.333333 0 0 1 469.333333 256z"/><path d="M650.069333 650.069333a42.666667 42.666667 0 0 1 60.330667 0l181.013333 181.013334a42.666667 42.666667 0 0 1-60.330666 60.330666l-181.013334-181.013333a42.666667 42.666667 0 0 1 0-60.330667z"/></svg>',
+      plus: '<svg viewBox="0 0 1024 1024" width="16" height="16"><path d="M512 64a448 448 0 1 0 0 896 448 448 0 0 0 0-896z m0 51.2a396.8 396.8 0 1 1 0 793.6 396.8 396.8 0 0 1 0-793.6z"/><path d="M486.4 486.4H320a25.6 25.6 0 0 0 0 51.2h166.4V704a25.6 25.6 0 0 0 51.2 0V537.6H704a25.6 25.6 0 0 0 0-51.2H537.6V320a25.6 25.6 0 0 0-51.2 0v166.4z"/></svg>'
     };
 
     // 歌名超宽时启用来回滚动 (替代截断); 以滚动容器自身宽度判定
@@ -1926,44 +1975,398 @@
       // 请求代次: 防止较早的取链响应覆盖最新选曲
       const seq = ++playSeq;
       toast("获取播放链接…", 1200);
-      // 先用默认音质, 失败自动降级到 M500 (几乎所有歌曲可用)
-      const tryTypes = [...new Set([DEFAULT_Q, "M500"])];
-      for (const t of tryTypes) {
-        try {
-          const map = await api(`/song/urls?mids=${encodeURIComponent(mid)}&type=${t}`);
-          if (seq !== playSeq) return; // 已有更新的选曲
-          const info = map?.[mid];
-          if (!info?.url) continue;
-          const label = (QUALITIES.find(q => q.code === t) || {}).label || t;
-          const cover = coverUrlOf(midToAlbum.get(mid) || "");
-          const audio = [{
-            name: `${name || mid} [${label}]`,
-            artist: singer || "-",
-            url: info.url,
-            cover
-          }];
-          if (ap) {
-            ap.list.clear();
-            ap.list.add(audio);
-            // APlayer 1.10.1 的 list.add 无 autoplay 参数且 clear 后处于暂停态,
-            // 必须显式调用 play() 才会开始播放
-            try { ap.play(); } catch (err) { console.warn("APlayer play failed:", err); }
-          } else {
-            nativePlay(audio[0]);
-          }
-          setNowPlaying(`${name || mid} [${label}]`, singer || "-", cover);
-          pushHistory(mid, name || mid, singer, cover);
-          loadLyricsFor(mid);
-          return;
-        } catch (e) { /* 尝试下一个音质 */ }
+      // 默认音质失败自动降级 M500 的逻辑在 fetchPlayUrl 内
+      const fetched = await fetchPlayUrl(mid);
+      if (seq !== playSeq) return; // 已有更新的选曲
+      if (!fetched) { toast("播放失败: 无可用直链", 3500); return; }
+      const cover = coverUrlOf(midToAlbum.get(mid) || "");
+      const audio = [{
+        name: `${name || mid} [${fetched.label}]`,
+        artist: singer || "-",
+        url: fetched.url,
+        cover,
+        __mid: mid
+      }];
+      if (ap) {
+        // 单曲立即播放: 与播放列表解耦 (列表播放走面板)
+        listFromPlaylist = false;
+        plRetryMid = ""; plRetryCount = 0;
+        renderPlaylist();
+        ap.list.clear();
+        ap.list.add(audio);
+        // APlayer 1.10.1 的 list.add 无 autoplay 参数且 clear 后处于暂停态,
+        // 必须显式调用 play() 才会开始播放
+        try { ap.play(); } catch (err) { console.warn("APlayer play failed:", err); }
+      } else {
+        nativePlay(audio[0]);
       }
-      toast("播放失败: 无可用直链", 3500);
+      setNowPlaying(`${name || mid} [${fetched.label}]`, singer || "-", cover);
+      pushHistory(mid, name || mid, singer, cover);
+      loadLyricsFor(mid);
     }
 
     function coverUrlOf(albumMid) {
       return albumMid ? `https://y.gtimg.cn/music/photo_new/T002R300x300M000${albumMid}.jpg` : "";
     }
     const midToAlbum = new Map(); // 行内缓存 mid -> albumMid (用于播放器封面)
+
+    // ==================== 播放列表 ====================
+    // 数据: 仅存曲目元数据 (localStorage), 直链按需取 (vkey 有有效期, 不持久化).
+    // 播放引擎: APlayer 列表与播放列表 1:1 对应 (listFromPlaylist), 切歌懒加载 + 断链重试.
+    const PL_KEY = "qm_playlist_v1";
+    const PL_MODE_KEY = "qm_playlist_mode";
+    const PL_MAX = 500;
+    const PL_URL_TTL_MS = 2 * 3600 * 1000; // 直链缓存有效期 (vkey 数小时级, 保守 2h)
+    const PL_MODES = {
+      seq: { order: "list", loop: "none", label: "顺序播放" },
+      loop: { order: "list", loop: "all", label: "列表循环" },
+      one: { order: "list", loop: "one", label: "单曲循环" },
+      shuffle: { order: "random", loop: "all", label: "随机播放" },
+    };
+    let playlist = loadPlaylistStore();
+    let plMode = PL_MODES[localStorage.getItem(PL_MODE_KEY)] ? localStorage.getItem(PL_MODE_KEY) : "loop";
+    let listFromPlaylist = false; // 当前 APlayer 列表是否与播放列表对应
+    let dragFrom = null;
+    let plPendingSeek = null;     // 重建列表后的进度恢复位置
+    let plRetryMid = "";          // 断链重试跟踪: 当前曲 mid
+    let plRetryCount = 0;         // 同一曲已重试次数 (成功换曲后清零)
+    let plSkipStreak = 0;         // 连续跳过计数 (死曲连播保护)
+    const plUrlCache = new Map(); // mid -> { url, label, at }
+    const plUrlInflight = new Map(); // mid -> Promise (并发取链合并)
+    let plPrefetchingInFlight = false;
+
+    function loadPlaylistStore() {
+      try {
+        const raw = JSON.parse(localStorage.getItem(PL_KEY) || "[]");
+        return Array.isArray(raw) ? raw.filter((x) => x && x.mid).slice(0, PL_MAX) : [];
+      } catch {
+        return [];
+      }
+    }
+    function savePlaylistStore() {
+      try { localStorage.setItem(PL_KEY, JSON.stringify(playlist)); } catch { /* 配额满等忽略 */ }
+    }
+
+    /** 取播放直链 (缓存优先由调用方判断): 默认音质失败自动降级 M500; 同一 mid 并发合并 */
+    function fetchPlayUrl(mid) {
+      if (plUrlInflight.has(mid)) return plUrlInflight.get(mid);
+      const p = (async () => {
+        for (const t of [...new Set([DEFAULT_Q, "M500"])]) {
+          try {
+            const map = await api(`/song/urls?mids=${encodeURIComponent(mid)}&type=${t}`);
+            const info = map?.[mid];
+            if (info?.url) {
+              const label = (QUALITIES.find((q) => q.code === t) || {}).label || t;
+              return { url: info.url, label };
+            }
+          } catch { /* 尝试下一档音质 */ }
+        }
+        return null;
+      })().finally(() => plUrlInflight.delete(mid));
+      plUrlInflight.set(mid, p);
+      return p;
+    }
+
+    /** 播放列表条目 -> APlayer audio 对象 (有未过期缓存则带上直链) */
+    function playlistAudioItem(p) {
+      const cached = plUrlCache.get(p.mid);
+      const fresh = cached && Date.now() - cached.at < PL_URL_TTL_MS;
+      return {
+        name: fresh ? `${p.name} [${cached.label}]` : p.name,
+        artist: p.singer || "-",
+        url: fresh ? cached.url : "",
+        cover: p.cover || coverUrlOf(midToAlbum.get(p.mid) || ""),
+        __mid: p.mid,
+      };
+    }
+
+    /** 确保 ap.list.audios[i] 有可用直链; 返回 url 或 "" */
+    async function ensureUrlForIndex(i, { force = false } = {}) {
+      const item = playlist[i];
+      if (!item || !ap) return "";
+      const audio = ap.list.audios?.[i];
+      if (!audio) return "";
+      const cached = plUrlCache.get(item.mid);
+      if (!force && cached && Date.now() - cached.at < PL_URL_TTL_MS) {
+        audio.url = cached.url;
+        audio.name = `${item.name} [${cached.label}]`;
+        return cached.url;
+      }
+      const fetched = await fetchPlayUrl(item.mid);
+      if (!fetched) return "";
+      plUrlCache.set(item.mid, { ...fetched, at: Date.now() });
+      audio.url = fetched.url;
+      audio.name = `${item.name} [${fetched.label}]`;
+      return fetched.url;
+    }
+
+    /** 预取下一首 (顺序/循环模式) 的直链, 避免自动续播时等待; 单飞限流 */
+    function prefetchNext(i) {
+      if (!ap || plMode === "shuffle") return;
+      const n = playlist.length;
+      if (n < 2 || plPrefetchingInFlight) return;
+      const next = (i + 1) % n;
+      if (next === i) return;
+      const item = playlist[next];
+      const cached = plUrlCache.get(item.mid);
+      if (cached && Date.now() - cached.at < PL_URL_TTL_MS) return;
+      plPrefetchingInFlight = true;
+      fetchPlayUrl(item.mid)
+        .then((fetched) => {
+          if (!fetched) return;
+          plUrlCache.set(item.mid, { ...fetched, at: Date.now() });
+          // 同步写入 APlayer 列表 (列表未重建时), 自动切歌可直接播, 免于空链报错
+          const audio = ap.list.audios?.[next];
+          if (audio && audio.__mid === item.mid) {
+            audio.url = fetched.url;
+            audio.name = `${item.name} [${fetched.label}]`;
+          }
+        })
+        .catch(() => {})
+        .finally(() => { plPrefetchingInFlight = false; });
+    }
+
+    /** 从播放列表播放第 i 首 (不同曲切换播放, 同曲切换暂停/继续) */
+    async function playPlaylistIndex(i) {
+      const item = playlist[i];
+      if (!item) return;
+      if (!ap) { toast("播放器不可用, 无法播放"); return; }
+      if (listFromPlaylist && ap.list.index === i) {
+        if (ap.audio?.paused) ap.play();
+        else ap.pause();
+        return;
+      }
+      plRetryMid = ""; plRetryCount = 0;
+      if (!listFromPlaylist) {
+        listFromPlaylist = true;
+        ap.list.clear();
+        ap.list.add(playlist.map(playlistAudioItem));
+      }
+      const url = await ensureUrlForIndex(i);
+      if (!url) { toast(`无法获取直链: ${item.name}`); return; }
+      ap.list.switch(i);
+      ap.play();
+      $("blockPlaying").classList.remove("collapsed");
+      $("blockPlaylist").classList.remove("collapsed");
+    }
+
+    /** 重建 APlayer 列表以同步结构变化 (增删/排序); 当前曲保留播放进度 */
+    async function rebuildApListKeepPlaying() {
+      if (!ap || !listFromPlaylist) { renderPlaylist(); return; }
+      const curMid = ap.list.audios?.[ap.list.index]?.__mid || "";
+      const pos = ap.audio?.currentTime || 0;
+      const wasPlaying = ap.audio ? !ap.audio.paused : false;
+      plRetryMid = ""; plRetryCount = 0;
+      ap.list.clear();
+      ap.list.add(playlist.map(playlistAudioItem));
+      const newIndex = curMid ? playlist.findIndex((p) => p.mid === curMid) : -1;
+      if (newIndex < 0) {
+        // 当前曲已被移除: 若有剩余等待用户点击, 清空则退出播放列表模式
+        if (!playlist.length) { listFromPlaylist = false; ap.pause(); }
+        renderPlaylist();
+        return;
+      }
+      const url = await ensureUrlForIndex(newIndex);
+      if (!url) { renderPlaylist(); return; }
+      ap.list.switch(newIndex);
+      plPendingSeek = pos > 1 ? pos : null;
+      if (wasPlaying) ap.play();
+      renderPlaylist();
+    }
+
+    function addToPlaylist(items) {
+      const list = (Array.isArray(items) ? items : [items]).filter((it) => it?.mid);
+      let added = 0, dup = 0;
+      for (const it of list) {
+        if (playlist.some((p) => p.mid === it.mid)) { dup++; continue; }
+        if (playlist.length >= PL_MAX) { toast(`播放列表已满 (上限 ${PL_MAX} 首)`); break; }
+        playlist.push({
+          mid: it.mid,
+          name: it.name || it.mid,
+          singer: it.singer || "",
+          cover: it.cover || "",
+          addedAt: Date.now(),
+        });
+        added++;
+      }
+      if (!added) { toast(dup ? "这些歌曲都已在播放列表中" : "没有可添加的歌曲"); return; }
+      savePlaylistStore();
+      if (listFromPlaylist && ap) {
+        // 仅在末尾追加, 不打断当前播放
+        ap.list.add(playlist.slice(playlist.length - added).map(playlistAudioItem));
+      }
+      renderPlaylist();
+      toast(`已加入播放列表 ${added} 首${dup ? ` (${dup} 首重复已忽略)` : ""}`);
+    }
+
+    function removeFromPlaylist(i) {
+      const [rm] = playlist.splice(i, 1);
+      if (!rm) return;
+      savePlaylistStore();
+      renderPlaylist();
+      if (listFromPlaylist && ap) rebuildApListKeepPlaying();
+      toast(`已移出播放列表: ${rm.name}`);
+    }
+
+    function applyPlMode() {
+      const m = PL_MODES[plMode] || PL_MODES.loop;
+      if (ap) {
+        ap.options.order = m.order;
+        ap.options.loop = m.loop;
+        if (m.order === "random") {
+          // APlayer 仅在 add 时生成随机序, 切换随机模式时重新洗牌
+          const n = ap.list.audios?.length || 0;
+          ap.randomOrder = [...Array(n).keys()].sort(() => Math.random() - 0.5);
+        }
+      }
+      document.querySelectorAll(".pl-mode-btn").forEach((b) => b.classList.toggle("active", b.dataset.mode === plMode));
+      try { localStorage.setItem(PL_MODE_KEY, plMode); } catch { /* ignore */ }
+    }
+
+    function renderPlaylist() {
+      const el = $("playlistList");
+      if (!el) return;
+      $("plCount").textContent = playlist.length ? `${playlist.length} 首` : "";
+      if (!playlist.length) {
+        el.innerHTML = `<div class="empty">播放列表为空<br>歌曲行的 ＋ 按钮可加入</div>`;
+        return;
+      }
+      el.innerHTML = "";
+      playlist.forEach((item, i) => {
+        const playing = listFromPlaylist && ap && ap.list.index === i;
+        const row = document.createElement("div");
+        row.className = `pl-item${playing ? " playing" : ""}`;
+        row.draggable = true;
+        row.innerHTML = `
+          <span class="pl-idx">${playing ? "▶" : i + 1}</span>
+          <span class="pl-name">${escapeHtml(item.name)}</span>
+          <span class="pl-singer">${escapeHtml(item.singer || "")}</span>
+          <button class="q-mini pl-rm" data-rm="${i}" type="button" title="移出播放列表" aria-label="移出播放列表">✕</button>`;
+        row.addEventListener("click", (e) => {
+          if (e.target.closest("[data-rm]")) return;
+          playPlaylistIndex(i);
+        });
+        row.querySelector("[data-rm]").addEventListener("click", (e) => {
+          e.stopPropagation();
+          removeFromPlaylist(Number(e.currentTarget.dataset.rm));
+        });
+        row.addEventListener("dragstart", (e) => {
+          dragFrom = i;
+          e.dataTransfer.effectAllowed = "move";
+        });
+        row.addEventListener("dragover", (e) => { e.preventDefault(); row.classList.add("drag-over"); });
+        row.addEventListener("dragleave", () => row.classList.remove("drag-over"));
+        row.addEventListener("drop", (e) => {
+          e.preventDefault();
+          row.classList.remove("drag-over");
+          if (dragFrom === null || dragFrom === i) return;
+          const [moved] = playlist.splice(dragFrom, 1);
+          playlist.splice(i, 0, moved);
+          dragFrom = null;
+          savePlaylistStore();
+          renderPlaylist();
+          if (listFromPlaylist && ap) rebuildApListKeepPlaying();
+        });
+        el.appendChild(row);
+      });
+    }
+
+    /** APlayer 切歌回调 (含自动续播): 同步 UI/歌词/历史, 懒加载直链并预取下一首 */
+    function onPlListSwitch({ index }) {
+      if (!listFromPlaylist || !ap) return;
+      renderPlaylist();
+      const item = playlist[index];
+      if (!item) return;
+      setNowPlaying(item.name, item.singer || "-");
+      pushHistory(item.mid, item.name, item.singer || "", item.cover || "");
+      loadLyricsFor(item.mid);
+      ensureUrlForIndex(index).then((url) => { if (url) prefetchNext(index); });
+    }
+
+    /** 播放错误 (直链过期/失效): 重取直链重试一次, 再失败则跳过; 连续的失败过多时暂停 */
+    async function onPlError() {
+      if (!listFromPlaylist || !ap) return;
+      const i = ap.list.index;
+      const item = playlist[i];
+      const audio = ap.list.audios?.[i];
+      if (!item || !audio || audio.__mid !== item.mid) return; // 列表重建等瞬态
+      if (plRetryMid !== item.mid) { plRetryMid = item.mid; plRetryCount = 0; }
+      plRetryCount++;
+      if (plRetryCount > 1) return giveUpTrack(item);
+      // 已有直链却播放失败说明链本身失效 -> 强制重取; 空链(懒加载)则优先用缓存
+      const url = await ensureUrlForIndex(i, { force: Boolean(audio.url) });
+      // 等待期间可能已被 APlayer 内置 2 秒跳过逻辑切走
+      if (ap.list.audios?.[ap.list.index]?.__mid !== item.mid) return;
+      if (!url) return giveUpTrack(item);
+      toast(`直链失效, 正在重试: ${item.name}`, 1800);
+      ap.list.switch(i); // 顺带清除内置的 2 秒跳过定时器
+      ap.play();
+    }
+
+    function giveUpTrack(item) {
+      if (!ap) return;
+      plSkipStreak++;
+      if (plSkipStreak >= 5) {
+        ap.pause();
+        toast("连续多首无法播放, 已暂停 (请检查网络或凭证)", 3500);
+        return;
+      }
+      if (playlist.length > 1) {
+        toast(`播放失败, 已跳过: ${item.name}`, 2600);
+        ap.skipForward();
+        if (!ap.paused) ap.play();
+      } else {
+        toast(`播放失败: ${item.name}`, 2600);
+        ap.pause();
+      }
+    }
+
+    function initPlaylist() {
+      renderPlaylist();
+      applyPlMode();
+      document.querySelectorAll(".pl-mode-btn").forEach((b) => {
+        b.addEventListener("click", () => {
+          plMode = b.dataset.mode;
+          applyPlMode();
+          toast(PL_MODES[plMode].label, 1200);
+        });
+      });
+      $("plClearBtn").addEventListener("click", () => {
+        if (!playlist.length) { toast("播放列表为空"); return; }
+        if (!confirm(`确定清空播放列表 (${playlist.length} 首)?`)) return;
+        playlist = [];
+        savePlaylistStore();
+        if (ap) { ap.list.clear(); listFromPlaylist = false; }
+        renderPlaylist();
+        toast("播放列表已清空");
+      });
+      $("plToQueueBtn").addEventListener("click", () => {
+        if (!playlist.length) { toast("播放列表为空"); return; }
+        addToQueue(playlist.map((p) => ({ mid: p.mid, name: p.name, singer: p.singer, type: DEFAULT_Q })));
+      });
+      $("parsePlBtn").addEventListener("click", () => {
+        const t = currentTrack;
+        if (!t?.mid) { toast("请先解析歌曲"); return; }
+        addToPlaylist([{ mid: t.mid, name: t.name, singer: t.artist, cover: t.cover }]);
+      });
+      if (ap) {
+        ap.on("listswitch", onPlListSwitch);
+        ap.on("error", onPlError);
+        ap.on("playing", () => {
+          const mid = ap.list.audios?.[ap.list.index]?.__mid || "";
+          if (!mid) return;
+          if (mid !== plRetryMid) { plRetryMid = mid; plRetryCount = 0; }
+          plSkipStreak = 0;
+          renderPlaylist();
+        });
+        ap.on("loadedmetadata", () => {
+          if (plPendingSeek != null && ap.audio) {
+            try { ap.audio.currentTime = plPendingSeek; } catch { /* ignore */ }
+            plPendingSeek = null;
+          }
+        });
+      }
+    }
 
     // ==================== 搜索页 ====================
     let acTimer = null;
@@ -2052,6 +2455,7 @@
               <button class="primary icon-btn" data-act="dl" type="button" title="下载" aria-label="下载">${ICONS.dl}</button>
               <button class="icon-btn" data-act="play" type="button" title="播放" aria-label="播放">${ICONS.play}</button>
               <button class="icon-btn" data-act="parse" type="button" title="解析" aria-label="解析">${ICONS.parse}</button>
+              <button class="icon-btn" data-act="pl" type="button" title="加入播放列表" aria-label="加入播放列表">${ICONS.plus}</button>
             </td>`;
           const name = it.name || "";
           const singer = (it.singer || []).map(s => s.name).join(" / ");
@@ -2070,6 +2474,10 @@
           tr.querySelector('[data-act="parse"]').addEventListener("click", (e) => {
             e.stopPropagation();
             openParser(it.mid);
+          });
+          tr.querySelector('[data-act="pl"]').addEventListener("click", (e) => {
+            e.stopPropagation();
+            addToPlaylist([{ mid: it.mid, name, singer, cover: coverUrlOf(it.album?.mid || "") }]);
           });
           tbody.appendChild(tr);
         });
@@ -2109,6 +2517,13 @@
         .map(it => ({ mid: it.mid, name: it.name, singer: (it.singer || []).map(s => s.name).join(" / "), type: DEFAULT_Q }));
       if (!picked.length) { toast("请先勾选歌曲"); return; }
       addToQueue(picked);
+    });
+    $("searchPlBtn").addEventListener("click", () => {
+      const idxs = [...document.querySelectorAll("#searchTbody .row-sel:checked")].map(cb => Number(cb.dataset.i));
+      const picked = idxs.map(i => lastSearchItems[i]).filter(Boolean)
+        .map(it => ({ mid: it.mid, name: it.name, singer: (it.singer || []).map(s => s.name).join(" / "), cover: coverUrlOf(it.album?.mid || "") }));
+      if (!picked.length) { toast("请先勾选歌曲"); return; }
+      addToPlaylist(picked);
     });
     $("searchBtn").addEventListener("click", () => doSearch(1));
     $("searchInput").addEventListener("keydown", (e) => {
@@ -2209,6 +2624,7 @@
               <button class="primary icon-btn" data-act="dl" type="button" title="下载" aria-label="下载">${ICONS.dl}</button>
               <button class="icon-btn" data-act="play" type="button" title="播放" aria-label="播放">${ICONS.play}</button>
               <button class="icon-btn" data-act="parse" type="button" title="解析" aria-label="解析">${ICONS.parse}</button>
+              <button class="icon-btn" data-act="pl" type="button" title="加入播放列表" aria-label="加入播放列表">${ICONS.plus}</button>
             </td>`;
           // 复选框点击不冒泡
           const cb = tr.querySelector(".row-sel");
@@ -2225,6 +2641,10 @@
           tr.querySelector('[data-act="parse"]').addEventListener("click", (e) => {
             e.stopPropagation();
             openParser(t.mid);
+          });
+          tr.querySelector('[data-act="pl"]').addEventListener("click", (e) => {
+            e.stopPropagation();
+            addToPlaylist([{ mid: t.mid, name: t.name, singer: t.singer, cover: coverUrlOf(t.albumMid || "") }]);
           });
           tbody.appendChild(tr);
         });
@@ -2249,6 +2669,19 @@
         .map(t => ({ mid: t.mid, name: t.name, singer: t.singer, type: DEFAULT_Q }));
       if (!picked.length) { toast("请先勾选歌曲"); return; }
       addToQueue(picked);
+    });
+    $("plPlBtn").addEventListener("click", () => {
+      const idxs = [...document.querySelectorAll("#plTbody .row-sel:checked")].map(cb => Number(cb.dataset.i));
+      const picked = idxs.map(i => plTracks[i]).filter(Boolean)
+        .map(t => ({ mid: t.mid, name: t.name, singer: t.singer, cover: coverUrlOf(t.albumMid || "") }));
+      if (!picked.length) { toast("请先勾选歌曲"); return; }
+      addToPlaylist(picked);
+    });
+    $("plPlAllBtn").addEventListener("click", () => {
+      const picked = plTracks.filter(t => t.mid)
+        .map(t => ({ mid: t.mid, name: t.name, singer: t.singer, cover: coverUrlOf(t.albumMid || "") }));
+      if (!picked.length) { toast("歌单为空"); return; }
+      addToPlaylist(picked);
     });
 
     $("plDlAllBtn").addEventListener("click", () => {
@@ -2514,6 +2947,7 @@
       console.warn("APlayer 初始化失败, 使用原生播放", e);
     }
     if (ap) ap.on("timeupdate", syncLyrics);
+    initPlaylist();
 
     initConfig();
     checkStatus();
