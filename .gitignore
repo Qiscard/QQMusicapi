@@ -6,6 +6,7 @@ dist/
 device.json
 credential.json
 config.json
+auth.json
 .mimosa/
 
 src/public/vendor/.mimosa/

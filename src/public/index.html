@@ -2519,6 +2519,74 @@
     checkStatus();
     renderHistory();
     initSite();
+    checkAuthState();
+
+    // ==================== 管理员密钥状态 (首次部署强制修改默认密钥) ====================
+    async function checkAuthState() {
+      let state;
+      try {
+        const r = await fetch("/auth/status");
+        state = await r.json();
+      } catch {
+        return;
+      }
+      if (state?.data?.mustChange) openAuthChangeModal();
+    }
+
+    /** 阻塞式改密弹窗: 默认密钥未修改前不可关闭, 修改成功即撤除 */
+    function openAuthChangeModal() {
+      const overlay = openModal(`
+        <div class="modal-head"><strong>⚠️ 请修改默认管理员密钥</strong></div>
+        <div class="modal-body md">
+          <p>本站当前正在使用部署默认密钥, 为避免任何人以默认密钥管理后台, 请立即设置新的管理员密钥 (至少 8 位)。</p>
+        </div>
+        <div class="modal-foot" style="flex-direction:column; align-items:stretch; gap:8px;">
+          <input class="set-input" id="authCurKey" type="password" placeholder="当前密钥 (部署默认密钥)" autocomplete="off" />
+          <input class="set-input" id="authNewKey" type="password" placeholder="新密钥 (至少 8 位)" autocomplete="new-password" />
+          <input class="set-input" id="authNewKey2" type="password" placeholder="确认新密钥" autocomplete="new-password" />
+          <div style="display:flex; gap:8px; align-items:center; margin-top:4px;">
+            <button class="q-mini primary" id="authChangeBtn" type="button">修改密钥</button>
+            <span class="hint" id="authChangeMsg"></span>
+          </div>
+        </div>`);
+      // 阻塞: 不提供 ✕ / 遮罩关闭; 修改成功前保持打开
+      const $id = (x) => overlay.querySelector(`#${x}`);
+      const msg = (text, ok) => {
+        const el = $id("authChangeMsg");
+        el.textContent = text;
+        el.style.color = ok ? "#4ade80" : "#f87171";
+      };
+      $id("authChangeBtn").addEventListener("click", async () => {
+        const cur = $id("authCurKey").value.trim();
+        const next = $id("authNewKey").value.trim();
+        const next2 = $id("authNewKey2").value.trim();
+        if (!cur) return msg("请输入当前密钥", false);
+        if (next.length < 8) return msg("新密钥至少 8 位", false);
+        if (next !== next2) return msg("两次输入的新密钥不一致", false);
+        $id("authChangeBtn").disabled = true;
+        msg("提交中…", true);
+        try {
+          const r = await fetch("/auth/change-key", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ currentKey: cur, newKey: next }),
+          });
+          const j = await r.json().catch(() => ({}));
+          if (r.ok && j.code === 0) {
+            msg("已修改, 请在登录管理页使用新密钥", true);
+            setTimeout(() => overlay.remove(), 900);
+            toast("管理员密钥已修改");
+          } else {
+            msg(j.message || `修改失败 (HTTP ${r.status})`, false);
+          }
+        } catch (e) {
+          msg(`修改失败: ${e.message}`, false);
+        } finally {
+          $id("authChangeBtn").disabled = false;
+        }
+      });
+      $id("authCurKey").focus();
+    }
 
     // ==================== 公告与联系方式 ====================
     let siteConfig = null;

@@ -50,6 +50,24 @@ PORT=3000 DEVICE_PATH=./device.json npm start
 | `CREDENTIAL_PATH` | `./credential.json` | 凭证持久化路径 |
 | `PLATFORM` | `android` | 请求平台：`android` / `desktop` / `web` |
 | `QQMUSIC_DEBUG` | - | 设为 `1` 时输出 check_sig 等调试日志 |
+| `ADMIN_KEY` | - | 管理员密钥（推荐部署时设置；设置后不可从 UI 修改） |
+| `ADMIN_BOOTSTRAP_KEY` | `123456` | 未配置 `ADMIN_KEY` 时的引导默认密钥，首次使用强制修改 |
+| `AUTH_PATH` | `./auth.json` | 从 UI 修改密钥后的哈希存储路径（仅存 sha256） |
+| `CREDENTIAL_KEEP_INTERVAL` | `21600000` | 凭证保活巡检间隔（毫秒，默认 6 小时） |
+| `CREDENTIAL_REFRESH_AHEAD` | `86400` | musickey 剩余有效期低于该秒数时提前续期（默认 24 小时） |
+| `MAX_CONCURRENT_DOWNLOADS` | `4` | 下载代理并发上限 |
+
+### 管理员密钥
+
+管理接口（`/login/*`、`/user/follow`、`/user/self`、`/site/admin`、`PUT /site` 等）需要管理员密钥，可通过 `X-API-Key` 头、`?key=` 查询参数或 body 中的 `key` 字段提供。
+
+密钥解析顺序：
+
+1. `ADMIN_KEY` 环境变量（部署者管理，UI 不可修改）；
+2. `auth.json` 中的哈希（从主页/登录页修改默认密钥后写入，仅存 sha256）；
+3. 引导默认密钥 `ADMIN_BOOTSTRAP_KEY`（默认 `123456`）。
+
+使用引导默认密钥时，进入首页或登录管理页会弹出**不可跳过的改密窗口**，且除改密接口外的所有管理接口返回 `403`（`code=40301`），直至密钥修改完成。`GET /auth/status` 可查询当前密钥来源（`env` / `file` / `bootstrap`）与是否待修改。
 
 ## 🌐 Web API
 
@@ -67,7 +85,9 @@ PORT=3000 DEVICE_PATH=./device.json npm start
 | --- | --- | --- |
 | `/` | GET | 首页 Web UI（歌曲解析器） |
 | `/login` | GET | 登录管理 Web UI |
-| `/health` | GET | 健康检查 |
+| `/health` | GET | 健康检查（含凭证过期字段） |
+| `/auth/status` | GET | 管理员密钥状态（来源 / 是否需修改 / keyValid） |
+| `/auth/change-key` | POST | 修改管理员密钥（`{currentKey, newKey}`，新密钥至少 8 位） |
 
 #### 搜索 `/search`
 

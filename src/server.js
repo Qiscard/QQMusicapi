@@ -143,31 +143,88 @@ class ConfigStore {
 // ==================== 管理员鉴权 ====================
 
 /**
- * 管理员密钥从环境变量 ADMIN_KEY 读取 (绝不写入源码).
- * 未配置时所有管理接口返回 503.
+ * 管理员密钥解析顺序:
+ *   1. ADMIN_KEY 环境变量 (部署者自行管理, 不可从 UI 修改)
+ *   2. AUTH_PATH 指向的 auth.json (仅存 sha256 哈希; UI 修改默认密钥后写入)
+ *   3. 引导默认密钥 (ADMIN_BOOTSTRAP_KEY, 未配置时为 "123456"), 且标记必须修改
+ * 密钥只以 sha256 哈希形式参与比较, 不落盘明文.
  */
-const ADMIN_KEY = String(process.env.ADMIN_KEY ?? "");
+const AUTH_PATH = process.env.AUTH_PATH ?? "./auth.json";
+const BOOTSTRAP_KEY = String(process.env.ADMIN_BOOTSTRAP_KEY ?? "123456");
+
+/** 当前生效密钥状态 (启动时解析, UI 修改后更新内存) */
+const authState = { hash: null, source: "none", mustChange: false };
+
+const sha256 = (text) => createHash("sha256").update(String(text)).digest();
+
+function loadAuthState() {
+  const envKey = String(process.env.ADMIN_KEY ?? "");
+  if (envKey) {
+    authState.hash = sha256(envKey);
+    authState.source = "env";
+    authState.mustChange = false;
+    return;
+  }
+  try {
+    if (existsSync(AUTH_PATH)) {
+      const raw = JSON.parse(readFileSync(AUTH_PATH, "utf-8"));
+      if (typeof raw?.keyHash === "string" && /^[0-9a-f]{64}$/.test(raw.keyHash)) {
+        authState.hash = Buffer.from(raw.keyHash, "hex");
+        authState.source = "file";
+        authState.mustChange = false;
+        return;
+      }
+    }
+  } catch {
+    /* 文件损坏时回落到引导模式, 由用户在 UI 重新设置 */
+  }
+  authState.hash = sha256(BOOTSTRAP_KEY);
+  authState.source = "bootstrap";
+  authState.mustChange = true;
+}
+loadAuthState();
 
 /** 常量时间比较 (先哈希对齐长度), 避免时序侧信道 */
 function keyMatches(input) {
-  if (!ADMIN_KEY || typeof input !== "string" || !input) return false;
-  const a = createHash("sha256").update(input).digest();
-  const b = createHash("sha256").update(ADMIN_KEY).digest();
-  return timingSafeEqual(a, b);
+  if (!authState.hash || typeof input !== "string" || !input) return false;
+  const a = sha256(input);
+  return timingSafeEqual(a, authState.hash);
 }
+
+/** 修改默认密钥后写入 auth.json (仅哈希), 并更新内存状态 */
+function persistAdminKey(newKey) {
+  const payload = JSON.stringify(
+    { keyHash: sha256(newKey).toString("hex"), updatedAt: new Date().toISOString() },
+    null,
+    2,
+  );
+  const tmp = `${AUTH_PATH}.tmp`;
+  writeFileSync(tmp, payload, "utf-8");
+  renameSync(tmp, AUTH_PATH);
+  authState.hash = sha256(newKey);
+  authState.source = "file";
+  authState.mustChange = false;
+}
+
+/** 引导模式下必须修改默认密钥; 白名单仅为前端校验密钥/展示改密入口所需 */
+const MUSTCHANGE_ALLOWLIST = new Set(["/auth/status", "/auth/change-key"]);
 
 /**
  * 管理员鉴权: 密钥可通过 X-API-Key 头 / ?key= 查询参数 / body.key 提供.
+ * 引导模式 (默认密钥未修改) 下, 除改密接口外的管理接口返回 403 (code=40301).
  */
 function requireAdmin(ctx) {
-  if (keyMatches(ctx.get("x-api-key") ?? "")) return;
-  if (keyMatches(String(ctx.query.key ?? ""))) return;
-  const bodyKey = ctx.request.body?.key;
-  if (typeof bodyKey === "string" && keyMatches(bodyKey)) return;
-  if (!ADMIN_KEY) {
-    ctx.throw(503, "服务端未配置 ADMIN_KEY 环境变量, 管理功能不可用");
+  const provided = [
+    ctx.get("x-api-key") ?? "",
+    String(ctx.query.key ?? ""),
+    ctx.request.body?.key,
+  ].find((candidate) => typeof candidate === "string" && keyMatches(candidate));
+  if (provided === undefined) {
+    ctx.throw(401, "需要管理员密钥 (X-API-Key 头或 ?key= 参数)");
   }
-  ctx.throw(401, "需要管理员密钥 (X-API-Key 头或 ?key= 参数)");
+  if (authState.mustChange && !MUSTCHANGE_ALLOWLIST.has(ctx.path)) {
+    ctx.throw(403, "正在使用默认密钥, 请先在主页修改管理员密钥", { code: 40301 });
+  }
 }
 
 // ==================== 账号等级探测 ====================
@@ -1180,7 +1237,7 @@ function createApp(options = {}) {
   });
 
   // 本地静态资源 (自托管的 APlayer 等, 避免浏览器端依赖国外 CDN)
-  root.get("/vendor/:file", (ctx) => {
+  root.get("/vendor/:file", async (ctx) => {
     const file = String(ctx.params.file ?? "");
     if (!/^[A-Za-z0-9._-]+$/.test(file)) ctx.throw(404);
     const p = join(PUBLIC_DIR, "vendor", file);
@@ -1192,6 +1249,35 @@ function createApp(options = {}) {
         : "application/octet-stream";
     ctx.set("Cache-Control", "public, max-age=86400");
     ctx.body = createReadStream(p);
+  });
+
+  // 管理员密钥状态与修改 (公开接口; 凭"当前密钥"本身鉴权, 不泄露密钥内容)
+  root.get("/auth/status", async (ctx) => {
+    const key = ctx.get("x-api-key") ?? String(ctx.query.key ?? "");
+    ctx.set("Cache-Control", "no-store");
+    ctx.body = ok({
+      source: authState.source, // env | file | bootstrap
+      mustChange: authState.mustChange,
+      keyValid: key ? keyMatches(key) : null,
+    });
+  });
+
+  root.post("/auth/change-key", async (ctx) => {
+    const body = ctx.request.body ?? {};
+    const currentKey = String(body.currentKey ?? "");
+    const newKey = String(body.newKey ?? "");
+    if (authState.source === "env") {
+      ctx.throw(400, "当前密钥由环境变量 ADMIN_KEY 管理, 请在部署配置中修改");
+    }
+    if (!keyMatches(currentKey)) ctx.throw(401, "当前密钥错误");
+    if (newKey.length < 8) ctx.throw(400, "新密钥至少 8 位");
+    if (newKey === currentKey) ctx.throw(400, "新密钥不能与当前密钥相同");
+    if (authState.source === "bootstrap" && newKey === BOOTSTRAP_KEY) {
+      ctx.throw(400, "新密钥不能与默认密钥相同");
+    }
+    persistAdminKey(newKey);
+    console.log(`[qqmusic-api] 管理员密钥已更新 (source=file, ${AUTH_PATH})`);
+    ctx.body = ok({ ok: true, source: authState.source, mustChange: authState.mustChange });
   });
   app.use(root.routes());
 
@@ -1231,5 +1317,9 @@ app.listen(PORT, () => {
   console.log(`[qqmusic-api] credential path : ${CREDENTIAL_PATH}`);
   console.log(`[qqmusic-api] config path     : ${CONFIG_PATH}`);
   console.log(`[qqmusic-api] platform        : ${PLATFORM}`);
-  console.log(`[qqmusic-api] admin key       : ${ADMIN_KEY ? "configured" : "NOT configured (管理接口不可用)"}`);
+  console.log(
+    `[qqmusic-api] admin key       : source=${authState.source}` +
+      (authState.mustChange ? " (正在使用默认密钥, 需在主页修改)" : "") +
+      (authState.source === "file" ? ` (${AUTH_PATH})` : ""),
+  );
 });

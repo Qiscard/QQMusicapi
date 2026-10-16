@@ -415,10 +415,23 @@
   <div class="key-gate" id="keyGate">
     <div class="gate-card">
       <h2>管理员访问</h2>
-      <p>此页面涉及账号凭证管理, 需要管理员密钥。<br>密钥由服务端 ADMIN_KEY 环境变量配置, 仅保存在本浏览器。</p>
+      <p>此页面涉及账号凭证管理, 需要管理员密钥。<br>密钥由部署者配置 (默认密钥首次使用后强制修改), 仅保存在本浏览器。</p>
       <input type="password" id="gateKeyInput" placeholder="请输入管理员密钥" autocomplete="off" />
       <button id="gateEnterBtn">进入管理后台</button>
       <div class="gate-err" id="gateErr"></div>
+    </div>
+  </div>
+
+  <!-- 默认密钥改密门: 使用默认密钥进入时必须完成修改, 不可跳过 -->
+  <div class="key-gate hidden" id="authChangeGate" style="z-index:110;">
+    <div class="gate-card">
+      <h2>⚠️ 请修改默认管理员密钥</h2>
+      <p>本站正在使用部署默认密钥, 所有人均可用它访问后台。<br>请设置新的管理员密钥 (至少 8 位) 后继续。</p>
+      <input type="password" id="authCurInput" placeholder="当前密钥 (默认密钥)" autocomplete="off" />
+      <input type="password" id="authNewInput" placeholder="新密钥 (至少 8 位)" autocomplete="new-password" />
+      <input type="password" id="authNew2Input" placeholder="确认新密钥" autocomplete="new-password" />
+      <button id="authChangeBtn">修改密钥</button>
+      <div class="gate-err" id="authChangeErr"></div>
     </div>
   </div>
 
@@ -551,14 +564,15 @@
       else localStorage.removeItem("qm_admin_key");
     }
 
+    /** 校验密钥 (走 /auth/status 的 keyValid); 返回 { valid, mustChange } */
     async function verifyKey(key) {
       try {
-        const r = await fetch("/login/status", { headers: { "X-API-Key": key } });
-        if (r.status !== 200) return false;
+        const r = await fetch("/auth/status", { headers: { "X-API-Key": key } });
+        if (r.status !== 200) return { valid: false, mustChange: false };
         const j = await r.json();
-        return j.code === 0;
+        return { valid: j.data?.keyValid === true, mustChange: j.data?.mustChange === true };
       } catch {
-        return false;
+        return { valid: false, mustChange: false };
       }
     }
 
@@ -587,20 +601,71 @@
       $("gateEnterBtn").disabled = true;
       $("gateErr").textContent = "校验中…";
       $("gateErr").style.color = "#8a909c";
-      const ok = await verifyKey(key);
+      const res = await verifyKey(key);
       $("gateEnterBtn").disabled = false;
       $("gateErr").style.color = "";
-      if (ok) {
+      if (res.valid) {
         setAdminKey(key);
         enterAdmin();
+        if (res.mustChange) showAuthChangeGate();
       } else {
-        $("gateErr").textContent = "密钥错误或服务未配置 ADMIN_KEY";
+        $("gateErr").textContent = "密钥错误";
       }
     }
 
     $("gateEnterBtn").addEventListener("click", tryEnter);
     $("gateKeyInput").addEventListener("keydown", (e) => {
       if (e.key === "Enter") tryEnter();
+    });
+
+    // ==================== 默认密钥强制修改 ====================
+    function showAuthChangeGate() {
+      $("authChangeGate").classList.remove("hidden");
+      $("authChangeErr").textContent = "";
+      // 刚校验/存储过当前密钥, 预填减少输入; 新密钥立即获得焦点
+      $("authCurInput").value = getAdminKey();
+      setTimeout(() => $("authNewInput").focus(), 50);
+    }
+
+    async function submitAuthChange() {
+      const cur = $("authCurInput").value.trim();
+      const next = $("authNewInput").value.trim();
+      const next2 = $("authNew2Input").value.trim();
+      const err = $("authChangeErr");
+      if (!cur) { err.textContent = "请输入当前密钥"; return; }
+      if (next.length < 8) { err.textContent = "新密钥至少 8 位"; return; }
+      if (next !== next2) { err.textContent = "两次输入的新密钥不一致"; return; }
+      $("authChangeBtn").disabled = true;
+      err.textContent = "提交中…";
+      err.style.color = "#8a909c";
+      try {
+        const r = await fetch("/auth/change-key", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ currentKey: cur, newKey: next }),
+        });
+        const j = await r.json().catch(() => ({}));
+        if (r.ok && j.code === 0) {
+          setAdminKey(next); // 后续管理请求改用新密钥
+          $("authChangeGate").classList.add("hidden");
+          err.style.color = "";
+          // 改密前被服务端 403 拦截的后台数据, 现在重新拉取
+          checkStatus();
+          loadSite().catch(() => {});
+        } else {
+          err.style.color = "";
+          err.textContent = j.message || `修改失败 (HTTP ${r.status})`;
+        }
+      } catch (e) {
+        err.style.color = "";
+        err.textContent = `修改失败: ${e.message}`;
+      } finally {
+        $("authChangeBtn").disabled = false;
+      }
+    }
+    $("authChangeBtn").addEventListener("click", submitAuthChange);
+    $("authNew2Input").addEventListener("keydown", (e) => {
+      if (e.key === "Enter") submitAuthChange();
     });
 
     async function api(path, options = {}) {
@@ -614,6 +679,11 @@
         // 密钥失效: 弹出密钥门重新校验
         showGate();
         throw new Error("需要管理员密钥");
+      }
+      if (r.status === 403 && j.code === 40301) {
+        // 默认密钥未修改: 打开改密门
+        showAuthChangeGate();
+        throw new Error("正在使用默认密钥, 请先修改");
       }
       if (j.code !== 0) throw new Error(j.message || `code ${j.code}`);
       return j.data;
@@ -1095,12 +1165,16 @@
     // 启动: 已存密钥则静默校验, 通过直接进入, 否则停在密钥门
     (async function gateInit() {
       const stored = getAdminKey();
-      if (stored && await verifyKey(stored)) {
-        enterAdmin(); // loadSite 已并入 enterAdmin, 不再重复调用
-      } else {
-        if (stored) setAdminKey(""); // 失效密钥清除
-        showGate();
+      if (stored) {
+        const res = await verifyKey(stored);
+        if (res.valid) {
+          enterAdmin(); // loadSite 已并入 enterAdmin, 不再重复调用
+          if (res.mustChange) showAuthChangeGate();
+          return;
+        }
+        setAdminKey(""); // 失效密钥清除
       }
+      showGate();
     })();
   </script>
 </body>
