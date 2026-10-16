@@ -1070,7 +1070,9 @@ function securityHeaders(ctx, { html = false } = {}) {
         // APlayer 内联样式/脚本与页面 <style>/<script> 需要 unsafe-inline;
         // 音频直链来自 qq.com CDN 且部分仅提供 http (aqqmusic.tc.qq.com),
         // 页面自身为 http 服务, 放行 http://*.qq.com 不构成混合内容
-        "img-src 'self' data: http://*.qq.com https://*.qq.com https://*.gtimg.cn",
+        // 公告/联系方式图片由管理员在后台配置 (可指向任意图床), img-src 放开 http/https;
+        // 图片不执行脚本, 且 Referrer-Policy: no-referrer 已隐藏来源
+        "img-src 'self' data: http: https:",
         "media-src 'self' http://*.qq.com https://*.qq.com",
         "style-src 'self' 'unsafe-inline'",
         "script-src 'self' 'unsafe-inline'",

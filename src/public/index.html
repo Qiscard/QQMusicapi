@@ -2590,6 +2590,11 @@
 
     // ==================== 公告与联系方式 ====================
     let siteConfig = null;
+    /** 本地时区当天 YYYY-MM-DD ("本次关闭"按本地日判断, 避免 UTC 在 0-8 点跨天误判) */
+    function localDay() {
+      const d = new Date();
+      return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`;
+    }
     function renderMarkdown(text) {
       const esc = String(text || "").replace(/[&<>"]/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" }[c]));
       const withFont = esc.replace(/&lt;font color="(#[0-9a-fA-F]{3,8}|[a-z]+)"&gt;([\s\S]*?)&lt;\/font&gt;/g, '<font color="$1">$2</font>');
@@ -2647,7 +2652,7 @@
         if (forceSeconds > 0 && dayBtn.disabled) return; // 倒计时未结束
         close(null);
       });
-      dayBtn.addEventListener("click", () => close(`day:${new Date().toISOString().slice(0, 10)}`));
+      dayBtn.addEventListener("click", () => close(`day:${localDay()}`));
       foreverBtn.addEventListener("click", () => close("forever"));
       // 主动打开(顶栏按钮)不启用强制阅读; 自动弹出时按配置倒计时
       const seconds = forceSeconds;
@@ -2692,7 +2697,7 @@
       if (notice.enabled) {
         const key = `qm-announcement-v2-${notice.version || 0}`;
         const seen = localStorage.getItem(key);
-        const today = `day:${new Date().toISOString().slice(0, 10)}`;
+        const today = `day:${localDay()}`;
         if (seen !== "forever" && seen !== today) openAnnouncement(false);
       }
     }
